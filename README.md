@@ -55,7 +55,6 @@ D:\HyperAlive
 ├── stub/                               # Xposed API 离线编译桩（免外网依赖）
 ├── build.py                            # 免 Gradle 本地高速构建脚本（~3秒生成 APK）
 ├── deploy.py                           # ADB 快速安装、激活作用域与单槽绑定工具
-└── qihang.keystore                     # 签名证书
 ```
 
 ### 极速构建与真机部署
