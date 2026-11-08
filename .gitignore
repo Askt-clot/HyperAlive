@@ -1,0 +1,28 @@
+# Android Studio & Gradle
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+*/build
+*.apk
+*.idsig
+*.ap_
+*.dex
+captures/
+.externalNativeBuild
+.cxx
+
+# Keystores & Signing Keys (Strict Security Rule)
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.log

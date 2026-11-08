@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HyperAlive</string>
+    <string name="xposed_desc">在澎湃OS4上实现魅族alive壁纸</string>
+    <string name="wallpaper_name">启航</string>
+    <string name="wallpaper_desc">魅族「启航」熄屏效果（圆形透镜）</string>
+    <string name="wallpaper_author">HyperAlive</string>
+</resources>
