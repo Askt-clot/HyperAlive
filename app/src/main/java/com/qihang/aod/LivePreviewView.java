@@ -78,7 +78,12 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
 
     void applyAodClockConfig(ClockSettings.Config c) {
         if (aodClock != null) {
-            aodClock.applyConfig(c);
+            if (c != null && !c.enabled) {
+                aodClock.setVisibility(GONE);
+            } else {
+                aodClock.setVisibility(VISIBLE);
+                aodClock.applyConfig(c);
+            }
         }
     }
 
@@ -98,7 +103,12 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
             addView(aodClock, new LayoutParams(real[0], real[1]));
         }
         aodClock.setClockMode(mode, false);
-        aodClock.setVisibility(VISIBLE);
+        ClockSettings.Config cur = ClockSettings.getDirect(getContext(), mode);
+        if (cur != null && !cur.enabled) {
+            aodClock.setVisibility(GONE);
+        } else {
+            aodClock.setVisibility(VISIBLE);
+        }
         post(this::scaleAodClock);
     }
 

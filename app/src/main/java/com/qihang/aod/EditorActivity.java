@@ -634,13 +634,55 @@ public class EditorActivity extends UiActivity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(0, ui.dp(12), 0, 0);
 
+        // ---- 0. 自由开关：开启自定义时间样式 / 关闭显示原生时钟 ----
+        LinearLayout enableRow = new LinearLayout(this);
+        enableRow.setOrientation(LinearLayout.HORIZONTAL);
+        enableRow.setGravity(Gravity.CENTER_VERTICAL);
+        enableRow.setBackground(ui.rounded(0xFF2C2C2E, 16));
+        enableRow.setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12));
+        LinearLayout.LayoutParams enableLp = new LinearLayout.LayoutParams(-1, -2);
+        enableLp.bottomMargin = ui.dp(14);
+
+        LinearLayout enableTextCol = new LinearLayout(this);
+        enableTextCol.setOrientation(LinearLayout.VERTICAL);
+
+        TextView lblEnable = new TextView(this);
+        lblEnable.setText("启用魅族时间样式");
+        lblEnable.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+        lblEnable.setTextColor(0xFFFFFFFF);
+        lblEnable.setTypeface(null, Typeface.BOLD);
+        enableTextCol.addView(lblEnable);
+
+        TextView subEnable = new TextView(this);
+        subEnable.setText("开启应用魅族个性化时钟，关闭则显示系统原生时钟");
+        subEnable.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        subEnable.setTextColor(0xFF8E8E93);
+        enableTextCol.addView(subEnable);
+
+        enableRow.addView(enableTextCol, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        final Switch swEnable = new Switch(this);
+        swEnable.setChecked(clockConfig.enabled);
+        enableRow.addView(swEnable, new LinearLayout.LayoutParams(-2, -2));
+        content.addView(enableRow, enableLp);
+
+        final LinearLayout optionsGroup = new LinearLayout(this);
+        optionsGroup.setOrientation(LinearLayout.VERTICAL);
+        optionsGroup.setAlpha(clockConfig.enabled ? 1.0f : 0.4f);
+
+        swEnable.setOnCheckedChangeListener((bv, isChecked) -> {
+            clockConfig.enabled = isChecked;
+            optionsGroup.setAlpha(isChecked ? 1.0f : 0.4f);
+            previewImage.applyAodClockConfig(clockConfig);
+        });
+
         // ---- 1. 五种官方时钟样式卡片选择器 ----
         TextView lblStyles = new TextView(this);
         lblStyles.setText("样式选择");
         lblStyles.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         lblStyles.setTextColor(0xFFE5E5EA);
         lblStyles.setTypeface(null, Typeface.BOLD);
-        content.addView(lblStyles);
+        optionsGroup.addView(lblStyles);
 
         HorizontalScrollView hScroll = new HorizontalScrollView(this);
         hScroll.setHorizontalScrollBarEnabled(false);
@@ -715,7 +757,7 @@ public class EditorActivity extends UiActivity {
             });
         }
         hScroll.addView(styleRow);
-        content.addView(hScroll);
+        optionsGroup.addView(hScroll);
 
         // ---- 2. 色彩选择 ----
         TextView lblColor = new TextView(this);
@@ -723,7 +765,7 @@ public class EditorActivity extends UiActivity {
         lblColor.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         lblColor.setTextColor(0xFFE5E5EA);
         lblColor.setTypeface(null, Typeface.BOLD);
-        content.addView(lblColor);
+        optionsGroup.addView(lblColor);
 
         LinearLayout colorRow = new LinearLayout(this);
         colorRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -766,7 +808,7 @@ public class EditorActivity extends UiActivity {
                 previewImage.applyAodClockConfig(clockConfig);
             });
         }
-        content.addView(colorRow);
+        optionsGroup.addView(colorRow);
 
         // ---- 3. 大小缩放 ----
         LinearLayout scaleHeader = new LinearLayout(this);
@@ -783,7 +825,7 @@ public class EditorActivity extends UiActivity {
         tvScaleVal.setTextColor(0xFF8E8E93);
         tvScaleVal.setText(String.format(java.util.Locale.US, "%.2fx", clockConfig.scale));
         scaleHeader.addView(tvScaleVal, new LinearLayout.LayoutParams(-2, -2));
-        content.addView(scaleHeader);
+        optionsGroup.addView(scaleHeader);
 
         final SeekBar sbScale = new SeekBar(this);
         sbScale.setMax(70);
@@ -804,7 +846,7 @@ public class EditorActivity extends UiActivity {
         LinearLayout.LayoutParams sbLp1 = new LinearLayout.LayoutParams(-1, -2);
         sbLp1.topMargin = ui.dp(4);
         sbLp1.bottomMargin = ui.dp(10);
-        content.addView(sbScale, sbLp1);
+        optionsGroup.addView(sbScale, sbLp1);
 
         // ---- 4. 字体粗细 ----
         LinearLayout weightHeader = new LinearLayout(this);
@@ -821,7 +863,7 @@ public class EditorActivity extends UiActivity {
         tvWeightVal.setTextColor(0xFF8E8E93);
         tvWeightVal.setText(clockConfig.weight + (clockConfig.weight <= 300 ? " (轻盈)" : clockConfig.weight >= 700 ? " (加粗)" : " (标准)"));
         weightHeader.addView(tvWeightVal, new LinearLayout.LayoutParams(-2, -2));
-        content.addView(weightHeader);
+        optionsGroup.addView(weightHeader);
 
         final SeekBar sbWeight = new SeekBar(this);
         sbWeight.setMax(650);
@@ -842,7 +884,7 @@ public class EditorActivity extends UiActivity {
         LinearLayout.LayoutParams sbLp2 = new LinearLayout.LayoutParams(-1, -2);
         sbLp2.topMargin = ui.dp(4);
         sbLp2.bottomMargin = ui.dp(10);
-        content.addView(sbWeight, sbLp2);
+        optionsGroup.addView(sbWeight, sbLp2);
 
         // ---- 5. 垂直位置微调 ----
         LinearLayout offsetHeader = new LinearLayout(this);
@@ -859,7 +901,7 @@ public class EditorActivity extends UiActivity {
         tvOffsetVal.setTextColor(0xFF8E8E93);
         tvOffsetVal.setText(clockConfig.offsetY == 0 ? "0dp (圆心)" : (clockConfig.offsetY > 0 ? "+" : "") + clockConfig.offsetY + "dp");
         offsetHeader.addView(tvOffsetVal, new LinearLayout.LayoutParams(-2, -2));
-        content.addView(offsetHeader);
+        optionsGroup.addView(offsetHeader);
 
         final SeekBar sbOffset = new SeekBar(this);
         sbOffset.setMax(80);
@@ -879,7 +921,7 @@ public class EditorActivity extends UiActivity {
         LinearLayout.LayoutParams sbLp3 = new LinearLayout.LayoutParams(-1, -2);
         sbLp3.topMargin = ui.dp(4);
         sbLp3.bottomMargin = ui.dp(10);
-        content.addView(sbOffset, sbLp3);
+        optionsGroup.addView(sbOffset, sbLp3);
 
         // ---- 6. 农历开关 ----
         LinearLayout lunarRow = new LinearLayout(this);
@@ -910,7 +952,9 @@ public class EditorActivity extends UiActivity {
             previewImage.applyAodClockConfig(clockConfig);
         });
         lunarRow.addView(swLunar, new LinearLayout.LayoutParams(-2, -2));
-        content.addView(lunarRow);
+        optionsGroup.addView(lunarRow);
+
+        content.addView(optionsGroup);
 
         scroll.addView(content);
         sheet.addView(scroll, new LinearLayout.LayoutParams(-1, ui.dp(360)));
@@ -918,6 +962,9 @@ public class EditorActivity extends UiActivity {
         // 恢复默认按钮逻辑
         tvReset.setOnClickListener(v -> {
             ClockSettings.Config def = new ClockSettings.Config();
+            clockConfig.enabled = def.enabled;
+            swEnable.setChecked(def.enabled);
+            optionsGroup.setAlpha(def.enabled ? 1.0f : 0.4f);
             clockConfig.style = def.style;
             clockConfig.color = def.color;
             clockConfig.scale = def.scale;
@@ -976,6 +1023,9 @@ public class EditorActivity extends UiActivity {
         }
 
         dialog.setContentView(root);
+        dialog.setOnDismissListener(d -> {
+            ClockSettings.save(this, mPendingAodConfig, mPendingLockConfig);
+        });
         Window w = dialog.getWindow();
         if (w != null) {
             w.setBackgroundDrawable(new ColorDrawable(0x00000000));
@@ -1245,13 +1295,13 @@ public class EditorActivity extends UiActivity {
             FrameLayout card = new FrameLayout(this);
             LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
-            if (i > 0) cardLp.leftMargin = ui.dp(12);
+            if (i > 0) cardLp.leftMargin = ui.dp(8);
             card.setLayoutParams(cardLp);
 
             LinearLayout content = new LinearLayout(this);
             content.setOrientation(LinearLayout.VERTICAL);
             content.setGravity(Gravity.CENTER_HORIZONTAL);
-            content.setPadding(ui.dp(10), ui.dp(12), ui.dp(10), ui.dp(12));
+            content.setPadding(ui.dp(6), ui.dp(12), ui.dp(6), ui.dp(12));
 
             ImageView thumb = new ImageView(this);
             thumb.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -1260,16 +1310,17 @@ public class EditorActivity extends UiActivity {
             } catch (Throwable t) {
                 Log.w(TAG, "加载缩略图失败: " + assets[i], t);
             }
-            LinearLayout.LayoutParams thumbLp = new LinearLayout.LayoutParams(ui.dp(72), ui.dp(72));
+            LinearLayout.LayoutParams thumbLp = new LinearLayout.LayoutParams(ui.dp(64), ui.dp(64));
             thumbLp.bottomMargin = ui.dp(8);
             content.addView(thumb, thumbLp);
 
             TextView title = new TextView(this);
             title.setText(titles[i]);
-            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
             title.setTextColor(0xFFFFFFFF);
             title.setTypeface(Typeface.DEFAULT_BOLD);
             title.setGravity(Gravity.CENTER);
+            title.setSingleLine(true);
             LinearLayout.LayoutParams cardTitleLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             cardTitleLp.gravity = Gravity.CENTER_HORIZONTAL;
@@ -1277,7 +1328,7 @@ public class EditorActivity extends UiActivity {
 
             TextView sub = new TextView(this);
             sub.setText(subs[i]);
-            sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
+            sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
             sub.setTextColor(0x90FFFFFF);
             sub.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams subTextLp = new LinearLayout.LayoutParams(
@@ -1332,7 +1383,7 @@ public class EditorActivity extends UiActivity {
                     cardViews[j].setBackground(b);
                 }
                 panelLiuguang.setVisibility(styleId == AodStyleSettings.STYLE_LEAVE_LIGHT ? View.VISIBLE : View.GONE);
-                append("息屏视觉样式暂存为：" + selectedName + "（点击右上角「应用」后生效）");
+                append("息屏视觉样式更改为：" + selectedName);
             });
 
             cardRow.addView(card);
@@ -1349,6 +1400,9 @@ public class EditorActivity extends UiActivity {
         sheet.addView(btnDone, doneLp);
 
         dialog.setContentView(root);
+        dialog.setOnDismissListener(d -> {
+            ClockSettings.save(this, mPendingAodConfig, mPendingLockConfig);
+        });
         Window w = dialog.getWindow();
         if (w != null) {
             w.setBackgroundDrawable(new ColorDrawable(0x00000000));

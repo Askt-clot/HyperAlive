@@ -31,6 +31,7 @@ public class ClockSettings {
     public static final int STYLE_COUNT = 5;
 
     public static final String PREF_NAME = "qihang_clock";
+    public static final String KEY_CLOCK_ENABLED = "clock_enabled";
     public static final String KEY_STYLE = "clock_style";
     public static final String KEY_COLOR = "clock_color";
     public static final String KEY_SCALE = "clock_scale";
@@ -39,6 +40,7 @@ public class ClockSettings {
     public static final String KEY_SHOW_LUNAR = "clock_show_lunar";
 
     // 熄屏（AOD）独立配置键
+    public static final String KEY_AOD_CLOCK_ENABLED = "aod_clock_enabled";
     public static final String KEY_AOD_STYLE = "aod_clock_style";
     public static final String KEY_AOD_COLOR = "aod_clock_color";
     public static final String KEY_AOD_SCALE = "aod_clock_scale";
@@ -47,6 +49,7 @@ public class ClockSettings {
     public static final String KEY_AOD_SHOW_LUNAR = "aod_clock_show_lunar";
 
     // 锁屏（LOCK）独立配置键
+    public static final String KEY_LOCK_CLOCK_ENABLED = "lock_clock_enabled";
     public static final String KEY_LOCK_STYLE = "lock_clock_style";
     public static final String KEY_LOCK_COLOR = "lock_clock_color";
     public static final String KEY_LOCK_SCALE = "lock_clock_scale";
@@ -72,6 +75,7 @@ public class ClockSettings {
     };
 
     public static class Config {
+        public boolean enabled = true; // 自由开关：true = 模块时间样式，false = 系统原生时钟
         public int style = STYLE_DOUBLE_STACK;
         public int color = 0xFFFFFFFF;
         public float scale = 1.0f;
@@ -81,7 +85,8 @@ public class ClockSettings {
 
         public boolean isSameStyle(Config o) {
             if (o == null) return false;
-            return style == o.style
+            return enabled == o.enabled
+                    && style == o.style
                     && color == o.color
                     && Math.abs(scale - o.scale) < 0.001f
                     && weight == o.weight
@@ -91,6 +96,7 @@ public class ClockSettings {
 
         public Config copy() {
             Config c = new Config();
+            c.enabled = this.enabled;
             c.style = this.style;
             c.color = this.color;
             c.scale = this.scale;
@@ -107,6 +113,7 @@ public class ClockSettings {
         if (ctx != null) {
             try {
                 SharedPreferences sp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                boolean defEnabled = sp.getBoolean(KEY_CLOCK_ENABLED, true);
                 int defStyle = sp.getInt(KEY_STYLE, STYLE_DOUBLE_STACK);
                 int defColor = sp.getInt(KEY_COLOR, 0xFFFFFFFF);
                 float defScale = sp.getFloat(KEY_SCALE, 1.0f);
@@ -114,6 +121,7 @@ public class ClockSettings {
                 int defOffset = sp.getInt(KEY_OFFSET_Y, 0);
                 boolean defLunar = sp.getBoolean(KEY_SHOW_LUNAR, false);
 
+                c.enabled = sp.getBoolean(KEY_AOD_CLOCK_ENABLED, defEnabled);
                 c.style = sp.getInt(KEY_AOD_STYLE, defStyle);
                 c.color = sp.getInt(KEY_AOD_COLOR, defColor);
                 c.scale = sp.getFloat(KEY_AOD_SCALE, defScale);
@@ -132,6 +140,7 @@ public class ClockSettings {
         if (ctx != null) {
             try {
                 SharedPreferences sp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                boolean defEnabled = sp.getBoolean(KEY_CLOCK_ENABLED, true);
                 int defStyle = sp.getInt(KEY_STYLE, STYLE_DOUBLE_STACK);
                 int defColor = sp.getInt(KEY_COLOR, 0xFFFFFFFF);
                 float defScale = sp.getFloat(KEY_SCALE, 1.0f);
@@ -139,6 +148,7 @@ public class ClockSettings {
                 int defOffset = sp.getInt(KEY_OFFSET_Y, 0);
                 boolean defLunar = sp.getBoolean(KEY_SHOW_LUNAR, false);
 
+                c.enabled = sp.getBoolean(KEY_LOCK_CLOCK_ENABLED, defEnabled);
                 c.style = sp.getInt(KEY_LOCK_STYLE, defStyle);
                 c.color = sp.getInt(KEY_LOCK_COLOR, defColor);
                 c.scale = sp.getFloat(KEY_LOCK_SCALE, defScale);
@@ -236,6 +246,7 @@ public class ClockSettings {
 
     private static Config extractFromBundle(Bundle b, boolean aod) {
         Config c = new Config();
+        String kEnabled = aod ? KEY_AOD_CLOCK_ENABLED : KEY_LOCK_CLOCK_ENABLED;
         String kStyle = aod ? KEY_AOD_STYLE : KEY_LOCK_STYLE;
         String kColor = aod ? KEY_AOD_COLOR : KEY_LOCK_COLOR;
         String kScale = aod ? KEY_AOD_SCALE : KEY_LOCK_SCALE;
@@ -243,6 +254,7 @@ public class ClockSettings {
         String kOffset = aod ? KEY_AOD_OFFSET_Y : KEY_LOCK_OFFSET_Y;
         String kLunar = aod ? KEY_AOD_SHOW_LUNAR : KEY_LOCK_SHOW_LUNAR;
 
+        boolean defEnabled = b.getBoolean(KEY_CLOCK_ENABLED, true);
         int defStyle = b.getInt(KEY_STYLE, STYLE_DOUBLE_STACK);
         int defColor = b.getInt(KEY_COLOR, 0xFFFFFFFF);
         float defScale = b.getFloat(KEY_SCALE, 1.0f);
@@ -250,6 +262,7 @@ public class ClockSettings {
         int defOffset = b.getInt(KEY_OFFSET_Y, 0);
         boolean defLunar = b.getBoolean(KEY_SHOW_LUNAR, false);
 
+        c.enabled = b.getBoolean(kEnabled, defEnabled);
         c.style = b.getInt(kStyle, defStyle);
         c.color = b.getInt(kColor, defColor);
         c.scale = b.getFloat(kScale, defScale);
@@ -261,6 +274,7 @@ public class ClockSettings {
 
     public static Config fromIntentAod(Intent intent) {
         Config c = new Config();
+        boolean defEnabled = intent.getBooleanExtra(KEY_CLOCK_ENABLED, true);
         int defStyle = intent.getIntExtra(KEY_STYLE, STYLE_DOUBLE_STACK);
         int defColor = intent.getIntExtra(KEY_COLOR, 0xFFFFFFFF);
         float defScale = intent.getFloatExtra(KEY_SCALE, 1.0f);
@@ -268,6 +282,7 @@ public class ClockSettings {
         int defOffset = intent.getIntExtra(KEY_OFFSET_Y, 0);
         boolean defLunar = intent.getBooleanExtra(KEY_SHOW_LUNAR, false);
 
+        c.enabled = intent.getBooleanExtra(KEY_AOD_CLOCK_ENABLED, defEnabled);
         c.style = intent.getIntExtra(KEY_AOD_STYLE, defStyle);
         c.color = intent.getIntExtra(KEY_AOD_COLOR, defColor);
         c.scale = intent.getFloatExtra(KEY_AOD_SCALE, defScale);
@@ -279,6 +294,7 @@ public class ClockSettings {
 
     public static Config fromIntentLock(Intent intent) {
         Config c = new Config();
+        boolean defEnabled = intent.getBooleanExtra(KEY_CLOCK_ENABLED, true);
         int defStyle = intent.getIntExtra(KEY_STYLE, STYLE_DOUBLE_STACK);
         int defColor = intent.getIntExtra(KEY_COLOR, 0xFFFFFFFF);
         float defScale = intent.getFloatExtra(KEY_SCALE, 1.0f);
@@ -286,6 +302,7 @@ public class ClockSettings {
         int defOffset = intent.getIntExtra(KEY_OFFSET_Y, 0);
         boolean defLunar = intent.getBooleanExtra(KEY_SHOW_LUNAR, false);
 
+        c.enabled = intent.getBooleanExtra(KEY_LOCK_CLOCK_ENABLED, defEnabled);
         c.style = intent.getIntExtra(KEY_LOCK_STYLE, defStyle);
         c.color = intent.getIntExtra(KEY_LOCK_COLOR, defColor);
         c.scale = intent.getFloatExtra(KEY_LOCK_SCALE, defScale);
@@ -306,12 +323,14 @@ public class ClockSettings {
             SharedPreferences sp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
             SharedPreferences.Editor ed = sp.edit();
             if (aod != null) {
-                ed.putInt(KEY_STYLE, aod.style)
+                ed.putBoolean(KEY_CLOCK_ENABLED, aod.enabled)
+                        .putInt(KEY_STYLE, aod.style)
                         .putInt(KEY_COLOR, aod.color)
                         .putFloat(KEY_SCALE, aod.scale)
                         .putInt(KEY_WEIGHT, aod.weight)
                         .putInt(KEY_OFFSET_Y, aod.offsetY)
                         .putBoolean(KEY_SHOW_LUNAR, aod.showLunar)
+                        .putBoolean(KEY_AOD_CLOCK_ENABLED, aod.enabled)
                         .putInt(KEY_AOD_STYLE, aod.style)
                         .putInt(KEY_AOD_COLOR, aod.color)
                         .putFloat(KEY_AOD_SCALE, aod.scale)
@@ -320,7 +339,8 @@ public class ClockSettings {
                         .putBoolean(KEY_AOD_SHOW_LUNAR, aod.showLunar);
             }
             if (lock != null) {
-                ed.putInt(KEY_LOCK_STYLE, lock.style)
+                ed.putBoolean(KEY_LOCK_CLOCK_ENABLED, lock.enabled)
+                        .putInt(KEY_LOCK_STYLE, lock.style)
                         .putInt(KEY_LOCK_COLOR, lock.color)
                         .putFloat(KEY_LOCK_SCALE, lock.scale)
                         .putInt(KEY_LOCK_WEIGHT, lock.weight)
@@ -345,6 +365,7 @@ public class ClockSettings {
             try {
                 Intent i = new Intent(ACTION_STYLE_CHANGED);
                 if (aod != null) {
+                    i.putExtra(KEY_CLOCK_ENABLED, aod.enabled);
                     i.putExtra(KEY_STYLE, aod.style);
                     i.putExtra(KEY_COLOR, aod.color);
                     i.putExtra(KEY_SCALE, aod.scale);
@@ -352,6 +373,7 @@ public class ClockSettings {
                     i.putExtra(KEY_OFFSET_Y, aod.offsetY);
                     i.putExtra(KEY_SHOW_LUNAR, aod.showLunar);
 
+                    i.putExtra(KEY_AOD_CLOCK_ENABLED, aod.enabled);
                     i.putExtra(KEY_AOD_STYLE, aod.style);
                     i.putExtra(KEY_AOD_COLOR, aod.color);
                     i.putExtra(KEY_AOD_SCALE, aod.scale);
@@ -360,6 +382,7 @@ public class ClockSettings {
                     i.putExtra(KEY_AOD_SHOW_LUNAR, aod.showLunar);
                 }
                 if (lock != null) {
+                    i.putExtra(KEY_LOCK_CLOCK_ENABLED, lock.enabled);
                     i.putExtra(KEY_LOCK_STYLE, lock.style);
                     i.putExtra(KEY_LOCK_COLOR, lock.color);
                     i.putExtra(KEY_LOCK_SCALE, lock.scale);
@@ -373,6 +396,10 @@ public class ClockSettings {
                 Log.w(TAG, "发送广播失败", t);
             }
         }
+    }
+
+    public static boolean isClockEnabled(Context ctx, int mode) {
+        return get(ctx, mode).enabled;
     }
 
     public static int getStyle(Context ctx) {

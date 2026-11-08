@@ -227,6 +227,13 @@ public class FlymeClockView extends FrameLayout {
         } else {
             mAodConfig = config;
         }
+        if (!mConfig.enabled) {
+            setVisibility(View.GONE);
+            return;
+        }
+        if (mClockMode == Motion.AOD || mClockMode == Motion.LOCK) {
+            setVisibility(View.VISIBLE);
+        }
         ensureTypeface(getContext());
 
         Typeface tf = getTypeface(mConfig.style, mConfig.weight);
@@ -410,16 +417,22 @@ public class FlymeClockView extends FrameLayout {
             return;
         }
 
+        if (mAodConfig == null) mAodConfig = ClockSettings.get(getContext(), Motion.AOD);
+        if (mLockConfig == null) mLockConfig = ClockSettings.get(getContext(), Motion.LOCK);
+        ClockSettings.Config targetConfig = (targetMode == Motion.LOCK) ? mLockConfig : mAodConfig;
+        if (targetConfig != null && !targetConfig.enabled) {
+            animate().cancel();
+            setVisibility(View.GONE);
+            mClockMode = targetMode;
+            return;
+        }
+
         setVisibility(View.VISIBLE);
         if (targetMode == mClockMode) {
             return;
         }
 
         mClockMode = targetMode;
-        if (mAodConfig == null) mAodConfig = ClockSettings.get(getContext(), Motion.AOD);
-        if (mLockConfig == null) mLockConfig = ClockSettings.get(getContext(), Motion.LOCK);
-
-        ClockSettings.Config targetConfig = (targetMode == Motion.LOCK) ? mLockConfig : mAodConfig;
 
         boolean same = (mAodConfig != null && mAodConfig.isSameStyle(mLockConfig));
         if (same) {

@@ -385,6 +385,9 @@ final class LensRenderer implements Runnable {
                 boolean needDraw = visible
                         || pendingDirty
                         || (motion != null && motion.animating())
+                        // AOD 自转需要**连续出帧**：仅靠 visible 会在过渡结束、且壁纸被判不可见时停帧，
+                        // 表现为「息屏十来秒后光球不再转动、亮屏也不见扩散」。
+                        || (motion != null && motion.needsContinuousFrames())
                         || dynActive
                         || (dynamicRenderer != null && dynamicRenderer.motion().active());
                 if (ok && needDraw) {

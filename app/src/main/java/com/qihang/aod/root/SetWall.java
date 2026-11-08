@@ -2,19 +2,10 @@ package com.qihang.aod.root;
 
 import android.content.ComponentName;
 import android.content.Context;
-
 import java.lang.reflect.Method;
 
 /**
- * 设置壁纸（桌面/锁屏/两者）。
- *
- * <p>两条通路：
- * <ol>
- *   <li>root：{@code app_process} 直接调 hidden 的
- *       {@code IWallpaperManager.setWallpaperComponentChecked(desc, pkg, which, userId)}，不受 hidden-api 限制；</li>
- *   <li>进程内：同样反射调用，但受 hidden API 灰名单影响，作为兜底。</li>
- * </ol>
- * {@code which}: 1=桌面，2=锁屏，3=两者。注意 **锁屏槽位（2）才是息屏时显示的那张**。
+ * 设置壁纸（桌面/锁屏/单槽位一体化 which=3）。
  */
 public final class SetWall {
 
@@ -62,30 +53,30 @@ public final class SetWall {
             if (target == null) {
                 return "ERR no setWallpaperComponentChecked";
             }
-            Class<?>[] p = target.getParameterTypes();
-            if (p.length == 4 && p[0] == descClass) {
+            target.setAccessible(true);
+            int params = target.getParameterCount();
+            if (params == 4) {
                 target.invoke(iwm, desc, pkg, which, 0);
-            } else if (p.length == 4) {
-                target.invoke(iwm, desc, pkg, which, 0);
+            } else if (params == 5) {
+                target.invoke(iwm, desc, pkg, which, 0, null);
             } else {
-                return "ERR unexpected arity " + p.length;
+                return "ERR unknown param count " + params;
             }
-            return "ok which=" + which + " -> " + pkg + "/" + serviceClass;
+            return "OK which=" + which + " cn=" + pkg + "/" + serviceClass;
         } catch (Throwable t) {
-            Throwable cause = t.getCause() != null ? t.getCause() : t;
-            return "ERR " + cause;
+            Throwable c = t.getCause() != null ? t.getCause() : t;
+            c.printStackTrace();
+            return "ERR " + c;
         }
     }
 
     private static Object wallpaperService() throws Exception {
-        Class<?> serviceManager = Class.forName("android.os.ServiceManager");
-        Object binder = serviceManager.getMethod("getService", String.class).invoke(null, "wallpaper");
+        Class<?> sm = Class.forName("android.os.ServiceManager");
+        Object b = sm.getMethod("getService", String.class).invoke(null, "wallpaper");
         Class<?> stub = Class.forName("android.app.IWallpaperManager$Stub");
-        Class<?> ibinder = Class.forName("android.os.IBinder");
-        return stub.getMethod("asInterface", ibinder).invoke(null, binder);
+        return stub.getMethod("asInterface", android.os.IBinder.class).invoke(null, b);
     }
 
-    /** 便捷入口：设本模块自己的壁纸。 */
     public static String setSelf(Context ctx, int which) {
         return set(ctx.getPackageName(), ctx.getPackageName() + ".QihangWallpaper", which);
     }

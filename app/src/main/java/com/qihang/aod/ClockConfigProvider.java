@@ -26,6 +26,7 @@ public class ClockConfigProvider extends ContentProvider {
 
             // 熄屏独立配置
             b.putInt(AodStyleSettings.KEY_STYLE, AodStyleSettings.getStyle(getContext()));
+            b.putBoolean(ClockSettings.KEY_AOD_CLOCK_ENABLED, aod.enabled);
             b.putInt(ClockSettings.KEY_AOD_STYLE, aod.style);
             b.putInt(ClockSettings.KEY_AOD_COLOR, aod.color);
             b.putFloat(ClockSettings.KEY_AOD_SCALE, aod.scale);
@@ -34,6 +35,7 @@ public class ClockConfigProvider extends ContentProvider {
             b.putBoolean(ClockSettings.KEY_AOD_SHOW_LUNAR, aod.showLunar);
 
             // 锁屏独立配置
+            b.putBoolean(ClockSettings.KEY_LOCK_CLOCK_ENABLED, lock.enabled);
             b.putInt(ClockSettings.KEY_LOCK_STYLE, lock.style);
             b.putInt(ClockSettings.KEY_LOCK_COLOR, lock.color);
             b.putFloat(ClockSettings.KEY_LOCK_SCALE, lock.scale);
@@ -42,6 +44,7 @@ public class ClockConfigProvider extends ContentProvider {
             b.putBoolean(ClockSettings.KEY_LOCK_SHOW_LUNAR, lock.showLunar);
 
             // 旧版/通用兼容键（默认取 AOD）
+            b.putBoolean(ClockSettings.KEY_CLOCK_ENABLED, aod.enabled);
             b.putInt(ClockSettings.KEY_STYLE, aod.style);
             b.putInt(ClockSettings.KEY_COLOR, aod.color);
             b.putFloat(ClockSettings.KEY_SCALE, aod.scale);
