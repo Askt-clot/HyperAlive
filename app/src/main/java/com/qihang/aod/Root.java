@@ -11,7 +11,6 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
@@ -147,7 +146,16 @@ public final class Root {
             }
             // App 进程对 /data/local/tmp 没有写权限（EACCES），所以先解到自己的 cache，
             // 再让 root 拷过去；最后无论如何都回退到"文件存在就用"。
-            File cache = new File(ctx.getCacheDir(), "qihang_aod.dex");
+            // 使用 Device Protected 存储确保开机 Direct Boot 阶段同样可用。
+            Context storageCtx = ctx;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                try {
+                    if (!ctx.isDeviceProtectedStorage()) {
+                        storageCtx = ctx.createDeviceProtectedStorageContext();
+                    }
+                } catch (Throwable ignored) {}
+            }
+            File cache = new File(storageCtx.getCacheDir(), "qihang_aod.dex");
             try (ZipFile zip = new ZipFile(apk);
                  InputStream in = zip.getInputStream(zip.getEntry("classes.dex"));
                  OutputStream os = new FileOutputStream(cache)) {
@@ -230,7 +238,7 @@ public final class Root {
         }
         // 优先用 app_process（以 root 身份调用 hidden API，不受 hidden-api 限制）
         String out = appProcess(ctx, "com.qihang.aod.root.SetWall", pkg, cls, String.valueOf(which));
-        if (out.contains("SETWALL ok")) {
+        if (out.contains("SETWALL ok") || out.contains("SETWALL OK")) {
             return out;
         }
         Log.w(TAG, "root SetWall failed, fallback in-process: " + out);
@@ -240,13 +248,75 @@ public final class Root {
     /** 原子同时设置桌面槽位(which=1)与锁屏/息屏槽位(which=2)，防止单步中途打断导致一侧残留动态壁纸。 */
     public static String setDualWallpaper(Context ctx, String pkg, String homeCls, String lockCls) {
         String out = appProcess(ctx, "com.qihang.aod.root.SetWall", pkg, homeCls, lockCls, "dual");
-        if (out.contains("SETWALL ok")) {
+        if (out.contains("SETWALL ok") || out.contains("SETWALL OK")) {
             return out;
         }
         Log.w(TAG, "root dual SetWall failed, fallback in-process: " + out);
+        String r3 = com.qihang.aod.root.SetWall.set(pkg, lockCls, 3);
         String r1 = com.qihang.aod.root.SetWall.set(pkg, homeCls, 1);
         String r2 = com.qihang.aod.root.SetWall.set(pkg, lockCls, 2);
-        return r1 + " ; " + r2;
+        return r3 + " ; " + r1 + " ; " + r2;
     }
 
+    /**
+     * 恢复系统原生静态壁纸（com.miui.miwallpaper/.wallpaperservice.ImageWallpaper）：
+     * 1. 通过标准 WallpaperManager.clear(FLAG_SYSTEM | FLAG_LOCK) 触发 WMS 与 MiuiWallpaper
+     *    恢复一体化默认壁纸（mWhich=3, ImageWallpaper$DesktopEngine 同管桌面与锁屏）；
+     * 2. 若上下文不可用或 clear 失败，退回 root SetWall clear 通道；
+     * 3. 严禁将 ImageWallpaper 单独绑定到 which=2（锁屏槽），否则在 HyperOS 中会创建第二个
+     *    DesktopEngine 抢占单例 VideoDepthManager 导致桌面壁纸黑屏。
+     */
+    public static boolean restoreDefaultWallpaper(Context ctx) {
+        Log.i(TAG, "开始恢复系统默认原生静态壁纸...");
+        su("setprop sys.qihang.allow_reset 1");
+        boolean ok = false;
+        try {
+            if (ctx != null) {
+                android.app.WallpaperManager wm = (android.app.WallpaperManager)
+                        ctx.getSystemService(Context.WALLPAPER_SERVICE);
+                if (wm != null) {
+                    try {
+                        wm.clear(android.app.WallpaperManager.FLAG_SYSTEM | android.app.WallpaperManager.FLAG_LOCK);
+                        ok = true;
+                        Log.i(TAG, "WallpaperManager.clear(FLAG_SYSTEM | FLAG_LOCK) 成功");
+                    } catch (Throwable t) {
+                        Log.w(TAG, "WallpaperManager.clear 异常", t);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        if (!ok && ctx != null) {
+            try {
+                String r = appProcess(ctx, "com.qihang.aod.root.SetWall",
+                        "clear", "com.qihang.aod", "3");
+                Log.i(TAG, "SetWall clear 返回: " + r);
+                if (r.contains("OK") || r.contains("ok")) {
+                    ok = true;
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "SetWall clear 异常", t);
+            }
+        }
+
+        if (!ok) {
+            try {
+                String r = com.qihang.aod.root.SetWall.clear("com.qihang.aod", 3);
+                Log.i(TAG, "进程内 SetWall.clear 返回: " + r);
+                if (r.contains("OK") || r.contains("ok")) {
+                    ok = true;
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "进程内 SetWall.clear 异常", t);
+            }
+        }
+
+        // 等待 MiuiWallPaperControllerService 异步完成 clear_wallpaper 默认壁纸加载
+        try {
+            Thread.sleep(300);
+        } catch (InterruptedException ignored) {}
+
+        su("setprop sys.qihang.allow_reset 0");
+        return ok;
+    }
 }

@@ -15,14 +15,10 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
-import java.nio.IntBuffer;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * 启航渲染器：EGL14 + GLES30，只有一个 program —— 官方 {@code lens_photo}。
@@ -64,16 +60,13 @@ final class LensRenderer implements Runnable {
     private volatile int pendingMode = Motion.LOCK;
     private volatile boolean pendingAnimate = true;
     private volatile boolean pendingDirty = true;
-    /** 渲染线程每帧刷新的过渡状态（主线程据此决定「续跑」还是「直接切」）。 */
+    /** 渲染线程每帧刷新的过渡状态。 */
     private volatile boolean transitionRunning;
-    private volatile long transitionRemainMs;
-    /** 本次请求是「接着当前进度跑」而不是「重新起动画」。 */
+    private volatile boolean pendingForceLockBeforeHome;
     private volatile boolean pendingContinue;
-    /** ≥0 时：先把状态对齐到「锁屏侧已播 elapsedMs」，再续跑到 pendingMode。 */
     private volatile int pendingSeekFrom = -1;
     private volatile int pendingSeekTo = Motion.LOCK;
     private volatile long pendingSeekElapsedMs;
-    private volatile boolean pendingForceLockBeforeHome;
     private volatile boolean pendingPhotoReload;
     private volatile boolean pendingPhotoReloadForce;
 
@@ -185,6 +178,23 @@ final class LensRenderer implements Runnable {
         this.previewSurface = null;
         this.homeSlot = homeSlot;
         this.aodStyle = AodStyleSettings.getStyle(this.appContext);
+        if (homeSlot) {
+            this.pendingMode = Motion.HOME;
+            this.pendingAnimate = false;
+        } else {
+            try {
+                android.os.PowerManager pm = (android.os.PowerManager)
+                        this.appContext.getSystemService(Context.POWER_SERVICE);
+                android.app.KeyguardManager km = (android.app.KeyguardManager)
+                        this.appContext.getSystemService(Context.KEYGUARD_SERVICE);
+                boolean interactive = pm == null || pm.isInteractive();
+                boolean locked = km != null && km.isKeyguardLocked();
+                if (interactive && !locked) {
+                    this.pendingMode = Motion.HOME;
+                    this.pendingAnimate = false;
+                }
+            } catch (Throwable ignored) {}
+        }
         this.thread = new Thread(this, homeSlot ? "QihangGL-Home" : "QihangGL-Lock");
     }
 
@@ -229,16 +239,6 @@ final class LensRenderer implements Runnable {
         wake();
     }
 
-    /** 过渡是否仍在进行（渲染线程刷新）。 */
-    boolean isTransitionRunning() {
-        return transitionRunning;
-    }
-
-    /** 过渡剩余时长 ms（未在过渡中为 0）。 */
-    long transitionRemainingMs() {
-        return transitionRemainMs;
-    }
-
     /** 从当前进度接着跑到 mode（不重启动画）。 */
     void continueTo(int mode) {
         pendingMode = mode;
@@ -262,6 +262,19 @@ final class LensRenderer implements Runnable {
         pendingContinue = true;
         pendingDirty = true;
         wake();
+    }
+
+    private volatile boolean fodVisible = true;
+
+    void setFodVisible(boolean v) {
+        if (this.fodVisible != v) {
+            this.fodVisible = v;
+            wake();
+        }
+    }
+
+    boolean isFodVisible() {
+        return fodVisible;
     }
 
     void setVisible(boolean v) {
@@ -306,10 +319,6 @@ final class LensRenderer implements Runnable {
             pendingDirty = true;
             wake();
         }
-    }
-
-    int getAodStyle() {
-        return aodStyle;
     }
 
     void requestPhotoReload() {
@@ -381,32 +390,42 @@ final class LensRenderer implements Runnable {
                 //    对于当前可见槽位或锁屏/AOD 槽位 (!homeSlot)，必须立刻渲染并出帧；
                 // 2) 若是桌面槽位 (homeSlot) 且当前不可见 (!visible) 且目标是 AOD，
                 //    无需在后台不可见时逐帧渲染高斯模糊抢占锁屏槽 GPU，直接走 else 分支对齐状态即可。
-                boolean dynActive = previewVariant > 0 && visible;
+                boolean dynActive = previewVariant > 0 && (!homeSlot || visible);
+                // AOD 连续自转帧率仅属于锁屏槽（!homeSlot 或预览），且当屏下指纹图标亮起时维持自转：
+                // 1) 桌面槽在 AOD 期间完全被锁屏图层遮挡，收缩动画结束后不应在后台持续自转消耗 GPU；
+                // 2) 息屏期间指纹图标一旦消失，立即停止自转并省电休眠，指纹图标重新亮起时恢复 120 FPS 渲染。
+                boolean isAodContinuous = !homeSlot
+                        && aodStyle == AodStyleSettings.STYLE_SET_SAIL
+                        && fodVisible
+                        && motion != null
+                        && motion.needsContinuousFrames();
                 boolean needDraw = visible
                         || pendingDirty
                         || (motion != null && motion.animating())
-                        // AOD 自转需要**连续出帧**：仅靠 visible 会在过渡结束、且壁纸被判不可见时停帧，
-                        // 表现为「息屏十来秒后光球不再转动、亮屏也不见扩散」。
-                        || (motion != null && motion.needsContinuousFrames())
+                        || isAodContinuous
                         || dynActive
                         || (dynamicRenderer != null && dynamicRenderer.motion().active());
                 if (ok && needDraw) {
-                    drawFrame(frameStartNanos);
-                    drewFrame = true;
-                    updateSurfaceFrameRateHint(surface);
-                    countTransitionFrames(frameStartNanos);
-                    if (previewSurface != null) {
-                        logPreview(nowNanos0());
-                    }
-                    if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
-                        Log.w(TAG, "eglSwapBuffers 失败 0x" + Integer.toHexString(EGL14.eglGetError()));
+                    try {
+                        drawFrame(frameStartNanos);
+                        drewFrame = true;
+                        updateSurfaceFrameRateHint(surface);
+                        countTransitionFrames(frameStartNanos);
+                        countAodFrames(frameStartNanos);
+                        if (previewSurface != null) {
+                            logPreview(System.nanoTime());
+                        }
+                        if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
+                            Log.w(TAG, "eglSwapBuffers 失败 0x" + Integer.toHexString(EGL14.eglGetError()));
+                        }
+                    } catch (Throwable t) {
+                        Log.e(TAG, "drawFrame 异常 (跳过该帧保持渲染线程存活)", t);
                     }
                 } else if (motion != null && previewVariant <= 0) {
                     applyPendingMode();
                     long now = System.nanoTime();
                     motion.advance(now);
                     transitionRunning = motion.animating();
-                    transitionRemainMs = motion.remainingMs(now);
                     updateSurfaceFrameRateHint(surface);
                 }
                 waitForNextFrame(frameStartNanos);
@@ -421,10 +440,6 @@ final class LensRenderer implements Runnable {
 
     private long previewLogNanos;
     private int previewFrames;
-
-    private long nowNanos0() {
-        return System.nanoTime();
-    }
 
     /** 预览：每秒打一行"角度 + 帧率"，用来核对自转速度与流畅度。 */
     private void logPreview(long nowNanos) {
@@ -445,14 +460,16 @@ final class LensRenderer implements Runnable {
     }
 
     private boolean isHighRateActive() {
-        if (previewVariant > 0 && visible) {
+        if (previewVariant > 0 && (!homeSlot || visible)) {
             return true;
         }
         if (motion != null && motion.animating()) {
             return true;
         }
         return aodStyle == AodStyleSettings.STYLE_SET_SAIL
-                && motion != null && motion.needsContinuousFrames() && visible;
+                && !homeSlot
+                && fodVisible
+                && motion != null && motion.needsContinuousFrames();
     }
 
     /**
@@ -512,6 +529,18 @@ final class LensRenderer implements Runnable {
             }
             return;
         }
+        if (!homeSlot && currentMotionMode() == Motion.AOD && !fodVisible) {
+            synchronized (lock) {
+                if (running && !pendingDirty && !fodVisible) {
+                    try {
+                        lock.wait(5000L); // 指纹消失后 AOD 停止自转，进入长周期休眠待机省电
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+            return;
+        }
         long idleMs = !visible ? 300L : 150L;
         synchronized (lock) {
             if (running && !pendingDirty) {
@@ -524,11 +553,6 @@ final class LensRenderer implements Runnable {
         }
     }
 
-    /** 当前模式（引擎用于"亮屏直驱"判断）。 */
-    int currentMode() {
-        return pendingMode;
-    }
-
     /** 当前实际运动引擎模式。 */
     int currentMotionMode() {
         return motion != null ? motion.mode : pendingMode;
@@ -538,23 +562,6 @@ final class LensRenderer implements Runnable {
         synchronized (lock) {
             return motion;
         }
-    }
-
-    void copyStateFrom(LensRenderer other) {
-        if (other == null) {
-            return;
-        }
-        synchronized (lock) {
-            synchronized (other.lock) {
-                if (this.motion != null && other.motion != null) {
-                    this.motion.copyFrom(other.motion);
-                }
-                this.pendingMode = other.pendingMode;
-                this.pendingAnimate = other.pendingAnimate;
-                this.pendingDirty = other.pendingDirty;
-            }
-        }
-        wake();
     }
 
     /** 锁屏槽在进入 AOD 收缩前，确保内部状态对齐到桌面全屏稳态（以便完整播放 tr3 回缩）。 */
@@ -651,8 +658,9 @@ final class LensRenderer implements Runnable {
             return;
         }
         boolean wantHigh = (motion != null && motion.animating())
+                || isHighRateActive()
                 || (dynamicRenderer != null && dynamicRenderer.motion().active())
-                || (previewVariant > 0 && visible);
+                || (previewVariant > 0 && (!homeSlot || visible));
         if (wantHigh == highFrameRateRequested) {
             return;
         }
@@ -685,6 +693,31 @@ final class LensRenderer implements Runnable {
         }
     }
 
+    private long aodFpsStartNanos;
+    private int aodFpsFrames;
+
+    private void countAodFrames(long nowNanos) {
+        if (!isHighRateActive()) {
+            aodFpsStartNanos = 0;
+            aodFpsFrames = 0;
+            return;
+        }
+        if (aodFpsStartNanos == 0) {
+            aodFpsStartNanos = nowNanos;
+            aodFpsFrames = 0;
+        }
+        aodFpsFrames++;
+        long elapsed = nowNanos - aodFpsStartNanos;
+        if (elapsed >= 2_000_000_000L) {
+            float fps = aodFpsFrames * 1_000_000_000f / elapsed;
+            Log.i(TAG, (previewSurface != null ? "[预览]" : (homeSlot ? "[桌面槽]" : "[锁屏槽]"))
+                    + " AOD自转帧率=" + String.format(java.util.Locale.US, "%.1f", fps)
+                    + "fps（目标=" + targetRefreshHz + "Hz）");
+            aodFpsStartNanos = nowNanos;
+            aodFpsFrames = 0;
+        }
+    }
+
     private void applyPendingMode() {
         if (motion == null) {
             return; // surface 尺寸还没拿到，第一帧时再建
@@ -709,7 +742,7 @@ final class LensRenderer implements Runnable {
         if (pendingContinue) {
             pendingContinue = false;
             motion.continueTo(pendingMode, now);
-        } else if (pendingSeekFrom < 0) {
+        } else {
             boolean anim = pendingAnimate;
             motion.setMode(pendingMode, anim, now);
         }
@@ -862,7 +895,6 @@ final class LensRenderer implements Runnable {
 
         motion.advance(nowNanos);
         transitionRunning = motion.animating();
-        transitionRemainMs = motion.remainingMs(nowNanos);
 
         if (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT) {
             if (liuguangPipeline == null) {
@@ -989,10 +1021,6 @@ final class LensRenderer implements Runnable {
             return 0f;
         }
         return Math.min(3f, blur / 12f);
-    }
-
-    private static float clamp(float v, float lo, float hi) {
-        return v < lo ? lo : (v > hi ? hi : v);
     }
 
     private static float[] identityCache;
@@ -1136,13 +1164,6 @@ final class LensRenderer implements Runnable {
         }
         Bitmap cover = coverCrop(src, (float) height / width, 2048);
         int tex = uploadBitmap(cover, true);
-        try {
-            File tf = new File(appContext.getExternalFilesDir(null), "tex_debug.png");
-            try (java.io.FileOutputStream os = new java.io.FileOutputStream(tf)) {
-                cover.compress(Bitmap.CompressFormat.PNG, 90, os);
-            }
-        } catch (Throwable ignored) {
-        }
         Log.i(TAG, "圆圈纹理 " + cover.getWidth() + "x" + cover.getHeight()
                 + " 来源=" + wallpaperSource.origin());
         if (cover != src) {

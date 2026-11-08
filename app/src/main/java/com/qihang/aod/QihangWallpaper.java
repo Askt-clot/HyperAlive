@@ -43,10 +43,8 @@ public class QihangWallpaper extends WallpaperService {
     /** 跨状态共享标志 */
     private static volatile boolean sLockExpandShown;
     private static volatile long sLockExpandShownAt;
-    private static volatile int sLockExpandFrom = Motion.AOD;
     private static volatile int sLockExpandTo = Motion.LOCK;
     private static volatile int sCurrentGlobalMode = Motion.LOCK;
-    private static volatile QihangEngine sEngine;
 
     @Override
     public Engine onCreateEngine() {
@@ -58,18 +56,68 @@ public class QihangWallpaper extends WallpaperService {
         final boolean homeSlot = QihangWallpaper.this instanceof QihangHomeWallpaper;
         private LensRenderer renderer;
         private BroadcastReceiver receiver;
+        private android.database.ContentObserver fsAodObserver;
         private Handler heartbeat;
         private Handler wakeWatchdog;
         private android.os.PowerManager powerManager;
+        private android.os.PowerManager.WakeLock aodWakeLock;
         private volatile boolean lastInteractive = true;
         private volatile int mode = homeSlot ? Motion.HOME : Motion.LOCK;
-        private volatile int lastCmdMode = -1;
-        private volatile long lastCmdMs = 0;
+
+        private void acquireAodWakeLock() {
+            try {
+                if (aodWakeLock == null && powerManager != null) {
+                    aodWakeLock = powerManager.newWakeLock(
+                            android.os.PowerManager.PARTIAL_WAKE_LOCK, "QihangAod:AodSpinWakeLock");
+                    aodWakeLock.setReferenceCounted(false);
+                }
+                if (aodWakeLock != null && !aodWakeLock.isHeld()) {
+                    aodWakeLock.acquire(15 * 60 * 1000L); // 15分钟安全超时保护
+                    Log.i(TAG, "已获取 AOD 自转 WakeLock (PARTIAL_WAKE_LOCK)");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "获取 AOD WakeLock 异常", t);
+            }
+        }
+
+        private void releaseAodWakeLock() {
+            try {
+                if (aodWakeLock != null && aodWakeLock.isHeld()) {
+                    aodWakeLock.release();
+                    Log.i(TAG, "已释放 AOD 自转 WakeLock");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "释放 AOD WakeLock 异常", t);
+            }
+        }
 
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
-            sEngine = this;
+
+            try {
+                powerManager = (android.os.PowerManager)
+                        QihangWallpaper.this.getSystemService(Context.POWER_SERVICE);
+            } catch (Throwable t) {
+                Log.w(TAG, "获取 PowerManager 失败", t);
+            }
+            boolean interactive = powerManager == null || powerManager.isInteractive();
+            boolean keyguardLocked = false;
+            try {
+                android.app.KeyguardManager km = (android.app.KeyguardManager)
+                        QihangWallpaper.this.getSystemService(Context.KEYGUARD_SERVICE);
+                keyguardLocked = km != null && km.isKeyguardLocked();
+            } catch (Throwable ignored) {}
+            if (homeSlot || (interactive && !keyguardLocked)) {
+                mode = Motion.HOME;
+                sCurrentGlobalMode = Motion.HOME;
+            } else if (!interactive) {
+                mode = isFullScreenAod() ? Motion.LOCK : Motion.AOD;
+                sCurrentGlobalMode = mode;
+            } else {
+                mode = Motion.LOCK;
+                sCurrentGlobalMode = Motion.LOCK;
+            }
 
             setOffsetNotificationsEnabled(false);
             renderer = new LensRenderer(QihangWallpaper.this, holder, homeSlot);
@@ -88,6 +136,7 @@ public class QihangWallpaper extends WallpaperService {
                         Log.i(TAG, "收到息屏风格切换: " + style);
                         if (renderer != null) {
                             renderer.setAodStyle(style);
+                            renderer.requestPhotoReloadForce();
                         }
                         return;
                     }
@@ -97,6 +146,31 @@ public class QihangWallpaper extends WallpaperService {
                             renderer.requestPhotoReloadForce();
                         }
                         return;
+                    }
+                    if (Intent.ACTION_USER_UNLOCKED.equals(action)) {
+                        Log.i(TAG, "设备解锁完毕 (USER_UNLOCKED)，重载壁纸照片与息屏风格");
+                        if (renderer != null) {
+                            renderer.setAodStyle(AodStyleSettings.getStyle(QihangWallpaper.this));
+                            renderer.requestPhotoReloadForce();
+                        }
+                        return;
+                    }
+                    if (intent.hasExtra("fod_visible")) {
+                        boolean fodVisible = intent.getBooleanExtra("fod_visible", true);
+                        Log.i(TAG, "收到指纹图标显隐变化: fod_visible=" + fodVisible);
+                        if (renderer != null) {
+                            renderer.setFodVisible(fodVisible);
+                        }
+                        if (!homeSlot) {
+                            if (!fodVisible && mode == Motion.AOD) {
+                                releaseAodWakeLock();
+                            } else if (fodVisible && mode == Motion.AOD) {
+                                acquireAodWakeLock();
+                            }
+                        }
+                        if (intent.getBooleanExtra("fod_changed", false)) {
+                            return;
+                        }
                     }
                     if (ACTION_MODE.equals(action)) {
                         int next = intent.getIntExtra(EXTRA_MODE, mode);
@@ -114,6 +188,7 @@ public class QihangWallpaper extends WallpaperService {
 
             IntentFilter filter = new IntentFilter(ACTION_MODE);
             filter.addAction(AodStyleSettings.ACTION_STYLE_CHANGED);
+            filter.addAction(Intent.ACTION_USER_UNLOCKED);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
             } else {
@@ -121,24 +196,25 @@ public class QihangWallpaper extends WallpaperService {
             }
 
             try {
+                fsAodObserver = new android.database.ContentObserver(new Handler(Looper.getMainLooper())) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        boolean fsAod = isFullScreenAod();
+                        Log.i(TAG, "full_screen_aod_on 动态变更: " + fsAod);
+                        boolean interactive = powerManager == null || powerManager.isInteractive();
+                        if (!interactive) {
+                            if (fsAod && mode == Motion.AOD) {
+                                applyCommand(Motion.LOCK, false);
+                            } else if (!fsAod && mode == Motion.LOCK) {
+                                applyCommand(Motion.AOD, true);
+                            }
+                        }
+                    }
+                };
                 getContentResolver().registerContentObserver(
                         android.provider.Settings.Secure.getUriFor("full_screen_aod_on"),
                         false,
-                        new android.database.ContentObserver(new Handler(Looper.getMainLooper())) {
-                            @Override
-                            public void onChange(boolean selfChange) {
-                                boolean fsAod = isFullScreenAod();
-                                Log.i(TAG, "full_screen_aod_on 动态变更: " + fsAod);
-                                boolean interactive = powerManager == null || powerManager.isInteractive();
-                                if (!interactive) {
-                                    if (fsAod && mode == Motion.AOD) {
-                                        applyCommand(Motion.LOCK, false);
-                                    } else if (!fsAod && mode == Motion.LOCK) {
-                                        applyCommand(Motion.AOD, true);
-                                    }
-                                }
-                            }
-                        }
+                        fsAodObserver
                 );
             } catch (Throwable t) {
                 Log.w(TAG, "注册 full_screen_aod_on ContentObserver 异常", t);
@@ -216,6 +292,9 @@ public class QihangWallpaper extends WallpaperService {
 
             int prevGlobalMode = sCurrentGlobalMode;
             if (next == Motion.AOD) {
+                if (!homeSlot) {
+                    acquireAodWakeLock();
+                }
                 // 进入息屏 AOD：若前态是桌面，确保以全屏为起点平滑回缩 (tr3)
                 if (mode == Motion.HOME || prevGlobalMode == Motion.HOME) {
                     renderer.ensureHomeStateBeforeAod();
@@ -225,13 +304,32 @@ public class QihangWallpaper extends WallpaperService {
                 sCurrentGlobalMode = Motion.AOD;
                 sLockExpandShown = false;
                 sLockExpandShownAt = 0;
-                sLockExpandFrom = Motion.AOD;
                 sLockExpandTo = Motion.LOCK;
+                if (!homeSlot) {
+                    // 锁屏槽在 AOD 期间是屏幕上的唯一显示窗口，确保可见性前置激活，消除从桌面直接息屏时系统不补发可见性回调导致的脏读
+                    renderer.setVisible(true);
+                }
             } else if (next == Motion.LOCK) {
+                releaseAodWakeLock();
+                if (homeSlot) {
+                    // ★ 桌面独立槽位永远不需要切换为锁屏壁纸：
+                    //   若当前在 AOD 缩圆态，保持 AOD 缩圆等待解锁；若已在 HOME 稳态，维持 HOME 稳态。
+                    //   严禁桌面壁纸响应 mode=1，杜绝桌面壁纸被误设为锁屏壁纸或干扰扩散标记！
+                    Log.i(TAG, "桌面独立槽位忽略 mode=1 锁屏指令，保持当前状态");
+                    return;
+                }
                 boolean interactive = powerManager == null || powerManager.isInteractive();
-                // 如果当前已经在桌面态且处于交互中（非熄屏/非AOD），避免被异步的残留 KEYGUARD / wake 广播回退到锁屏
-                if (interactive && !isFullScreenAod() && (sCurrentGlobalMode == Motion.HOME || mode == Motion.HOME)) {
-                    Log.i(TAG, "屏幕处于交互态且当前已处于桌面态(HOME)，忽略残留 mode=1 锁屏指令");
+                boolean keyguardLocked = false;
+                try {
+                    android.app.KeyguardManager km = (android.app.KeyguardManager)
+                            QihangWallpaper.this.getSystemService(Context.KEYGUARD_SERVICE);
+                    keyguardLocked = km != null && km.isKeyguardLocked();
+                } catch (Throwable ignored) {}
+                // 仅当设备确实已解锁处于桌面交互态（!keyguardLocked）或全局模式已进入 HOME 时，忽略残留的 mode=1 指令；
+                // 若当前处于锁屏（keyguardLocked=true）或非交互态，锁屏引擎必须响应 mode=1 切换回锁屏壁纸与锁屏过渡！
+                if ((interactive && !keyguardLocked && !isFullScreenAod())
+                        || sCurrentGlobalMode == Motion.HOME) {
+                    Log.i(TAG, "屏幕处于已解锁桌面态(HOME)，忽略残留 mode=1 锁屏指令");
                     return;
                 }
                 if (isFullScreenAod()) {
@@ -241,33 +339,31 @@ public class QihangWallpaper extends WallpaperService {
                 if (!sLockExpandShown) {
                     sLockExpandShown = true;
                     sLockExpandShownAt = now;
-                    sLockExpandFrom = prevGlobalMode;
                     sLockExpandTo = Motion.LOCK;
                 }
             } else if (next == Motion.HOME) {
+                releaseAodWakeLock();
                 sCurrentGlobalMode = Motion.HOME;
-                if (!sLockExpandShown) {
-                    // 指纹直接从 AOD 息屏直达桌面（未经过锁屏 mode=1）
+                boolean isFromLock = sLockExpandShown && sLockExpandTo == Motion.LOCK && sLockExpandShownAt > 0;
+                if (!isFromLock) {
+                    // 指纹直接从 AOD 息屏直达桌面（未经过锁屏 mode=1 扩散）
                     sLockExpandShown = true;
                     sLockExpandShownAt = now;
-                    sLockExpandFrom = Motion.AOD;
                     sLockExpandTo = Motion.HOME;
                 }
             }
 
             mode = next;
-            lastCmdMode = next;
-            lastCmdMs = now;
 
             if (next == Motion.HOME) {
                 if (sLockExpandTo == Motion.HOME) {
                     // 指纹从 AOD 直达桌面 → 播放 tr2 爆发扩散动画
-                    Log.i(TAG, "指纹从 AOD 直达桌面 → 播放 tr2 爆发扩散动画");
+                    Log.i(TAG, "指纹从 AOD 直达桌面 → 播放 tr2 爆发扩散动画 (curMotion=" + curMotion + ")");
                     renderer.setMode(Motion.HOME, animate);
                     return;
                 }
                 // 从锁屏解锁进桌面
-                long elapsed = now - sLockExpandShownAt;
+                long elapsed = Math.max(0, now - sLockExpandShownAt);
                 if (elapsed >= LOCK_EXPAND_TOTAL_MS) {
                     if (LastSet.isHomeDistinct(QihangWallpaper.this) && animate) {
                         Log.i(TAG, "锁屏扩散已在锁屏播完（" + elapsed + "ms），独立桌面壁纸 → 播 500ms 交叉渐变(tr4)");
@@ -277,8 +373,8 @@ public class QihangWallpaper extends WallpaperService {
                         renderer.setMode(Motion.HOME, false);
                     }
                 } else {
-                    Log.i(TAG, "锁屏扩散仍在播（" + elapsed + "ms）→ 无缝接力续跑");
-                    renderer.setMode(Motion.HOME, true);
+                    Log.i(TAG, "锁屏扩散仍在播（已 " + elapsed + "ms）→ 无缝接力续跑");
+                    renderer.seekThenContinue(Motion.AOD, Motion.LOCK, elapsed, Motion.HOME);
                 }
                 return;
             }
@@ -286,12 +382,27 @@ public class QihangWallpaper extends WallpaperService {
             renderer.setMode(next, animate);
         }
 
-        /** 屏幕点亮时的扩散兜底：只要渲染器仍停在 AOD，就补发锁屏扩散。 */
+        /** 屏幕点亮时的扩散兜底：只要渲染器仍停在 AOD，就补发扩散。 */
         private void onScreenOnDetected() {
             if (renderer == null) return;
             if (renderer.currentMotionMode() == Motion.AOD) {
-                Log.i(TAG, "亮屏兜底：屏幕已点亮但渲染器仍停在 AOD，补发锁屏扩散");
-                applyCommand(Motion.LOCK, true);
+                boolean keyguardLocked = false;
+                try {
+                    android.app.KeyguardManager km = (android.app.KeyguardManager)
+                            QihangWallpaper.this.getSystemService(Context.KEYGUARD_SERVICE);
+                    keyguardLocked = km != null && km.isKeyguardLocked();
+                } catch (Throwable ignored) {}
+                if (!keyguardLocked) {
+                    if (homeSlot) {
+                        Log.i(TAG, "亮屏看门狗兜底：设备已解锁且桌面槽停留在 AOD，补发 HOME 爆发扩散");
+                        applyCommand(Motion.HOME, true);
+                    }
+                } else {
+                    if (!homeSlot) {
+                        Log.i(TAG, "亮屏看门狗兜底：设备处于锁屏且锁屏槽停留在 AOD，补发锁屏扩散");
+                        applyCommand(Motion.LOCK, true);
+                    }
+                }
             }
         }
 
@@ -300,14 +411,29 @@ public class QihangWallpaper extends WallpaperService {
             super.onVisibilityChanged(visible);
             if (renderer != null) {
                 renderer.setVisible(visible);
-                // 唤醒亮屏且仍停在 AOD 态时，补发锁屏扩散（不再要求引擎侧 mode==LOCK：
+                // 唤醒亮屏且仍停在 AOD 态时，补发锁屏/桌面扩散（不再要求引擎侧 mode==LOCK：
                 // 熄屏期间广播可能被 Greezer 丢弃，mode 字段会停留在 AOD）。
                 // 但必须确认屏幕确实处于交互态：熄屏瞬间系统会让壁纸可见性 true→false 抖动一次，
                 // 若不校验，锁屏槽会在息屏过程中被误扩散到 LOCK 并一直停在 LOCK（AOD 无光球）。
                 boolean interactive = powerManager == null || powerManager.isInteractive();
                 if (visible && interactive && renderer.currentMotionMode() == Motion.AOD) {
-                    Log.i(TAG, "唤醒亮屏且停留在 AOD 态，补发扩散动画");
-                    applyCommand(Motion.LOCK, true);
+                    boolean keyguardLocked = false;
+                    try {
+                        android.app.KeyguardManager km = (android.app.KeyguardManager)
+                                QihangWallpaper.this.getSystemService(Context.KEYGUARD_SERVICE);
+                        keyguardLocked = km != null && km.isKeyguardLocked();
+                    } catch (Throwable ignored) {}
+                    if (!keyguardLocked) {
+                        if (homeSlot) {
+                            Log.i(TAG, "桌面槽唤醒亮屏且停留在 AOD 态，立即补发 HOME 爆发扩散");
+                            applyCommand(Motion.HOME, true);
+                        }
+                    } else {
+                        if (!homeSlot) {
+                            Log.i(TAG, "锁屏槽唤醒亮屏且停留在 AOD 态，补发锁屏扩散");
+                            applyCommand(Motion.LOCK, true);
+                        }
+                    }
                 } else if (visible && !interactive && renderer.currentMotionMode() == Motion.AOD) {
                     Log.i(TAG, "壁纸可见但屏幕非交互（熄屏抖动），忽略补发扩散");
                 }
@@ -350,11 +476,18 @@ public class QihangWallpaper extends WallpaperService {
         @Override
         public void onDestroy() {
             super.onDestroy();
+            releaseAodWakeLock();
             if (receiver != null) {
                 try {
                     unregisterReceiver(receiver);
                 } catch (Throwable ignored) {}
                 receiver = null;
+            }
+            if (fsAodObserver != null) {
+                try {
+                    getContentResolver().unregisterContentObserver(fsAodObserver);
+                } catch (Throwable ignored) {}
+                fsAodObserver = null;
             }
             if (heartbeat != null) {
                 heartbeat.removeCallbacksAndMessages(null);
@@ -366,9 +499,6 @@ public class QihangWallpaper extends WallpaperService {
             if (renderer != null) {
                 renderer.stop();
                 renderer = null;
-            }
-            if (sEngine == this) {
-                sEngine = null;
             }
             Log.i(TAG, "QihangWallpaper 引擎已销毁");
         }

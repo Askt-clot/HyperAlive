@@ -1,15 +1,11 @@
 package com.qihang.aod;
 
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.util.Log;
-
-import java.io.File;
 
 /**
  * 实时预览：向壁纸引擎要一帧**当前真实画面**。

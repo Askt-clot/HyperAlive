@@ -34,10 +34,47 @@ final class PhotoStore {
     private PhotoStore() {
     }
 
+    static Context getSafeContext(Context c) {
+        if (c == null) return null;
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            try {
+                if (!c.isDeviceProtectedStorage()) {
+                    return c.createDeviceProtectedStorageContext();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return c;
+    }
+
+    static File deFile(Context c, String name) {
+        try {
+            Context safe = getSafeContext(c);
+            if (safe != null) {
+                File dir = safe.getFilesDir();
+                if (dir != null) {
+                    if (!dir.exists()) dir.mkdirs();
+                    return new File(dir, name);
+                }
+            }
+        } catch (Throwable ignored) {}
+        return new File("/data/user_de/0/com.qihang.aod/files", name);
+    }
+
     static File file(Context c, String name) {
-        File dir = c.getExternalFilesDir(null);
+        File dir = null;
+        try {
+            dir = c.getExternalFilesDir(null);
+        } catch (Throwable ignored) {}
         if (dir == null) {
-            dir = c.getFilesDir();
+            try {
+                dir = c.getFilesDir();
+            } catch (Throwable ignored) {}
+        }
+        if (dir == null) {
+            File de = deFile(c, name);
+            if (de != null) return de;
+            return new File("/data/user_de/0/com.qihang.aod/files", name);
         }
         return new File(dir, name);
     }
@@ -48,18 +85,31 @@ final class PhotoStore {
 
     static boolean hasRaw(Context c, String name) {
         File f = rawFile(c, name);
-        return f.exists() && f.length() > 1024;
+        if (f.exists() && f.length() > 1024) return true;
+        File de = deFile(c, "raw_" + name);
+        return de != null && de.exists() && de.length() > 1024;
     }
 
     static boolean has(Context c, String name) {
         File f = file(c, name);
-        return f.exists() && f.length() > 1024;
+        if (f.exists() && f.length() > 1024) {
+            return true;
+        }
+        File de = deFile(c, name);
+        return de != null && de.exists() && de.length() > 1024;
     }
 
     /** 文件修改时间（当版本号用，没有则 -1）。 */
     static long stamp(Context c, String name) {
         File f = file(c, name);
-        return f.exists() ? f.lastModified() : -1;
+        if (f.exists()) {
+            return f.lastModified();
+        }
+        File de = deFile(c, name);
+        if (de != null && de.exists()) {
+            return de.lastModified();
+        }
+        return -1;
     }
 
     static Bitmap load(Context c, String name) {
@@ -67,10 +117,38 @@ final class PhotoStore {
             return null;
         }
         try {
-            return BitmapFactory.decodeFile(file(c, name).getAbsolutePath());
+            File f = file(c, name);
+            if (f.exists() && f.length() > 1024) {
+                Bitmap b = BitmapFactory.decodeFile(f.getAbsolutePath());
+                if (b != null) return b;
+            }
         } catch (Throwable t) {
             Log.w(Root.TAG, "读照片失败 " + name, t);
-            return null;
+        }
+        try {
+            File de = deFile(c, name);
+            if (de != null && de.exists() && de.length() > 1024) {
+                return BitmapFactory.decodeFile(de.getAbsolutePath());
+            }
+        } catch (Throwable t) {
+            Log.w(Root.TAG, "读 DE 照片失败 " + name, t);
+        }
+        return null;
+    }
+
+    static void syncToDe(Context c) {
+        try {
+            for (String name : new String[]{LOCK, HOME, FRAME, "raw_" + LOCK, "raw_" + HOME, "raw_" + FRAME}) {
+                File src = file(c, name);
+                File dst = deFile(c, name);
+                if (src.exists() && src.length() > 1024 && dst != null
+                        && (!dst.exists() || dst.length() != src.length() || dst.lastModified() < src.lastModified())) {
+                    copyFile(src, dst);
+                    Log.i(Root.TAG, "同步到 Device Protected: " + name);
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(Root.TAG, "syncToDe 失败", t);
         }
     }
 
@@ -105,6 +183,17 @@ final class PhotoStore {
         }
         atomicReplace(tmp, dst);
         Log.i(Root.TAG, "照片已保存 " + dst + " " + bmp.getWidth() + "x" + bmp.getHeight());
+
+        // 同步备份到 Device Protected 存储，确保开机 Direct Boot 期间无条件可用
+        try {
+            File de = deFile(c, name);
+            if (de != null && !de.equals(dst)) {
+                copyFile(dst, de);
+                Log.i(Root.TAG, "照片已同步至 Device Protected 存储: " + de);
+            }
+        } catch (Throwable t) {
+            Log.w(Root.TAG, "同步照片至 Device Protected 存储失败", t);
+        }
     }
 
     static void copyFile(File src, File dst) throws IOException {

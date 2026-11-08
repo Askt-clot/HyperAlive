@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- LSPosed 推荐作用域：系统界面、系统界面组件、熄屏与锁屏编辑 -->
+    <!-- LSPosed 推荐作用域：系统框架(xposedminversion<100 时需写 android 由 LSPosed 映射为 system)、系统界面、系统界面组件、熄屏与锁屏编辑、模块自身 -->
     <string-array name="xposed_scope" translatable="false">
+        <item>android</item>
         <item>com.android.systemui</item>
         <item>miui.systemui.plugin</item>
         <item>com.miui.aod</item>
+        <item>com.qihang.aod</item>
     </string-array>
 </resources>

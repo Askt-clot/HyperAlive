@@ -39,6 +39,19 @@ public final class AodStyleSettings {
         }
     }
 
+    static Context getSafeContext(Context c) {
+        if (c == null) return null;
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            try {
+                if (!c.isDeviceProtectedStorage()) {
+                    return c.createDeviceProtectedStorageContext();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return c;
+    }
+
     public static int getStyle(Context context) {
         int cached = sCachedStyle;
         if (cached == STYLE_SET_SAIL || cached == STYLE_LEAVE_LIGHT) {
@@ -47,6 +60,20 @@ public final class AodStyleSettings {
         if (context == null) {
             return STYLE_SET_SAIL;
         }
+        try {
+            Context safe = getSafeContext(context);
+            if (safe != null) {
+                SharedPreferences sp = safe.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                if (sp.contains(KEY_STYLE)) {
+                    int style = sp.getInt(KEY_STYLE, STYLE_SET_SAIL);
+                    if (style != STYLE_LEAVE_LIGHT) {
+                        style = STYLE_SET_SAIL;
+                    }
+                    sCachedStyle = style;
+                    return style;
+                }
+            }
+        } catch (Throwable ignored) {}
         try {
             SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
             int style = sp.getInt(KEY_STYLE, STYLE_SET_SAIL);
@@ -67,11 +94,18 @@ public final class AodStyleSettings {
             return;
         }
         try {
+            Context safe = getSafeContext(context);
+            if (safe != null) {
+                safe.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_STYLE, norm).commit();
+                safe.getSharedPreferences(ClockSettings.PREF_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_STYLE, norm).commit();
+            }
+        } catch (Throwable ignored) {}
+        try {
             SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-            sp.edit().putInt(KEY_STYLE, norm).apply();
+            sp.edit().putInt(KEY_STYLE, norm).commit();
 
             SharedPreferences clockSp = context.getSharedPreferences(ClockSettings.PREF_NAME, Context.MODE_PRIVATE);
-            clockSp.edit().putInt(KEY_STYLE, norm).apply();
+            clockSp.edit().putInt(KEY_STYLE, norm).commit();
 
             Intent intent = new Intent(ACTION_STYLE_CHANGED);
             intent.putExtra(KEY_STYLE, norm);

@@ -317,6 +317,10 @@ final class Motion {
             frameValues[i] = fs[i];
             frameTracked[i] = false;
         }
+        for (int i = 0; i < 3; i++) {
+            ratio[i] = i == scene ? 1f : 0f;
+        }
+        ratioRetarget = false;
         mode = scene;
         animating = false;
         startNanos = nowNanos;

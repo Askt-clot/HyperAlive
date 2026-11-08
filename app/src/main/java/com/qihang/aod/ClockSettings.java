@@ -107,12 +107,26 @@ public class ClockSettings {
         }
     }
 
+    static Context getSafeContext(Context c) {
+        if (c == null) return null;
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            try {
+                if (!c.isDeviceProtectedStorage()) {
+                    return c.createDeviceProtectedStorageContext();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return c;
+    }
+
     /** 读取熄屏配置（直读 SP，优先 aod_*，回退 clock_*） */
     public static Config getAodDirect(Context ctx) {
         Config c = new Config();
         if (ctx != null) {
             try {
-                SharedPreferences sp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                Context safe = getSafeContext(ctx);
+                SharedPreferences sp = (safe != null ? safe : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
                 boolean defEnabled = sp.getBoolean(KEY_CLOCK_ENABLED, true);
                 int defStyle = sp.getInt(KEY_STYLE, STYLE_DOUBLE_STACK);
                 int defColor = sp.getInt(KEY_COLOR, 0xFFFFFFFF);
@@ -139,7 +153,8 @@ public class ClockSettings {
         Config c = new Config();
         if (ctx != null) {
             try {
-                SharedPreferences sp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                Context safe = getSafeContext(ctx);
+                SharedPreferences sp = (safe != null ? safe : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
                 boolean defEnabled = sp.getBoolean(KEY_CLOCK_ENABLED, true);
                 int defStyle = sp.getInt(KEY_STYLE, STYLE_DOUBLE_STACK);
                 int defColor = sp.getInt(KEY_COLOR, 0xFFFFFFFF);
@@ -320,6 +335,39 @@ public class ClockSettings {
     public static void saveLocal(Context ctx, Config aod, Config lock) {
         if (ctx == null) return;
         try {
+            Context safe = getSafeContext(ctx);
+            if (safe != null) {
+                SharedPreferences spSafe = safe.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                SharedPreferences.Editor edSafe = spSafe.edit();
+                if (aod != null) {
+                    edSafe.putBoolean(KEY_CLOCK_ENABLED, aod.enabled)
+                            .putInt(KEY_STYLE, aod.style)
+                            .putInt(KEY_COLOR, aod.color)
+                            .putFloat(KEY_SCALE, aod.scale)
+                            .putInt(KEY_WEIGHT, aod.weight)
+                            .putInt(KEY_OFFSET_Y, aod.offsetY)
+                            .putBoolean(KEY_SHOW_LUNAR, aod.showLunar)
+                            .putBoolean(KEY_AOD_CLOCK_ENABLED, aod.enabled)
+                            .putInt(KEY_AOD_STYLE, aod.style)
+                            .putInt(KEY_AOD_COLOR, aod.color)
+                            .putFloat(KEY_AOD_SCALE, aod.scale)
+                            .putInt(KEY_AOD_WEIGHT, aod.weight)
+                            .putInt(KEY_AOD_OFFSET_Y, aod.offsetY)
+                            .putBoolean(KEY_AOD_SHOW_LUNAR, aod.showLunar);
+                }
+                if (lock != null) {
+                    edSafe.putBoolean(KEY_LOCK_CLOCK_ENABLED, lock.enabled)
+                            .putInt(KEY_LOCK_STYLE, lock.style)
+                            .putInt(KEY_LOCK_COLOR, lock.color)
+                            .putFloat(KEY_LOCK_SCALE, lock.scale)
+                            .putInt(KEY_LOCK_WEIGHT, lock.weight)
+                            .putInt(KEY_LOCK_OFFSET_Y, lock.offsetY)
+                            .putBoolean(KEY_LOCK_SHOW_LUNAR, lock.showLunar);
+                }
+                edSafe.commit();
+            }
+        } catch (Throwable ignored) {}
+        try {
             SharedPreferences sp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
             SharedPreferences.Editor ed = sp.edit();
             if (aod != null) {
@@ -347,7 +395,7 @@ public class ClockSettings {
                         .putInt(KEY_LOCK_OFFSET_Y, lock.offsetY)
                         .putBoolean(KEY_LOCK_SHOW_LUNAR, lock.showLunar);
             }
-            ed.apply();
+            ed.commit();
         } catch (Throwable t) {
             Log.w(TAG, "保存配置失败: " + t);
         }

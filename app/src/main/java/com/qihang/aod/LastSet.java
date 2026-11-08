@@ -24,17 +24,55 @@ final class LastSet {
     private LastSet() {
     }
 
-    /** 应用时调用：记下这次给桌面设了什么。 */
+    static Context getSafeContext(Context c) {
+        if (c == null) return null;
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            try {
+                if (!c.isDeviceProtectedStorage()) {
+                    return c.createDeviceProtectedStorageContext();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return c;
+    }
+
+    /** 应用时调用：记下这次给桌面设了什么。同时写入 Device Protected 存储以支持开机 Direct Boot。 */
     static void save(Context c, int kind, String component) {
-        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putInt(KEY_KIND, kind)
-                .putString(KEY_COMPONENT, component == null ? "" : component)
-                .apply();
+        try {
+            Context safe = getSafeContext(c);
+            if (safe != null) {
+                safe.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                        .putInt(KEY_KIND, kind)
+                        .putString(KEY_COMPONENT, component == null ? "" : component)
+                        .commit();
+            }
+        } catch (Throwable ignored) {}
+        try {
+            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putInt(KEY_KIND, kind)
+                    .putString(KEY_COMPONENT, component == null ? "" : component)
+                    .commit();
+        } catch (Throwable ignored) {}
         android.util.Log.i(Root.TAG, "记住最后一次设置：桌面来源=" + kind + " 组件=" + component);
     }
 
     static int kind(Context c) {
-        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_KIND, KIND_FOLLOW);
+        if (c == null) return KIND_FOLLOW;
+        try {
+            Context safe = getSafeContext(c);
+            if (safe != null) {
+                android.content.SharedPreferences sp = safe.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+                if (sp.contains(KEY_KIND)) {
+                    return sp.getInt(KEY_KIND, KIND_FOLLOW);
+                }
+            }
+        } catch (Throwable ignored) {}
+        try {
+            return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_KIND, KIND_FOLLOW);
+        } catch (Throwable ignored) {
+            return KIND_FOLLOW;
+        }
     }
 
     /** 桌面是否使用了不跟随锁屏的独立图片壁纸。 */
@@ -43,7 +81,21 @@ final class LastSet {
     }
 
     static String component(Context c) {
-        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_COMPONENT, "");
+        if (c == null) return "";
+        try {
+            Context safe = getSafeContext(c);
+            if (safe != null) {
+                android.content.SharedPreferences sp = safe.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+                if (sp.contains(KEY_COMPONENT)) {
+                    return sp.getString(KEY_COMPONENT, "");
+                }
+            }
+        } catch (Throwable ignored) {}
+        try {
+            return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_COMPONENT, "");
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     /** 某个场景的展示图 = 最后一次在模块里设置的效果。 */

@@ -15,18 +15,57 @@ public final class SetWall {
     public static void main(String[] args) {
         try {
             if (args.length < 3) {
-                System.out.println("SETWALL usage: <pkg> <serviceClass> <which> | <pkg> <homeClass> <lockClass> dual");
+                System.out.println("SETWALL usage: <pkg> <serviceClass> <which> | <pkg> <homeClass> <lockClass> dual | clear <pkg> <which>");
+                return;
+            }
+            if ("clear".equals(args[0])) {
+                int w = Integer.parseInt(args[2]);
+                System.out.println("SETWALL " + clear(args[1], w));
                 return;
             }
             if (args.length >= 4 && "dual".equals(args[3])) {
+                // 先将 which=3 整体替换为模块锁屏壁纸，彻底卸下可能处于 mWhich=3 的系统 ImageWallpaper，
+                // 防止直接设置 which=1 时触发 MIUI 将 ImageWallpaper 自动拆迁为锁屏画报 (MiuiKeyguardPictorialWallpaper)
+                String r3 = set(args[0], args[2], 3);
                 String r1 = set(args[0], args[1], 1);
                 String r2 = set(args[0], args[2], 2);
-                System.out.println("SETWALL " + r1 + " ; " + r2);
+                System.out.println("SETWALL " + r3 + " ; " + r1 + " ; " + r2);
                 return;
             }
-            System.out.println("SETWALL " + set(args[0], args[1], Integer.parseInt(args[2])));
+            int which = Integer.parseInt(args[2]);
+            System.out.println("SETWALL " + set(args[0], args[1], which));
         } catch (Throwable t) {
             System.out.println("SETWALL ERR " + t);
+        }
+    }
+
+    public static String clear(String pkg, int which) {
+        try {
+            Object iwm = wallpaperService();
+            Method target = null;
+            for (Method m : iwm.getClass().getMethods()) {
+                if ("clearWallpaper".equals(m.getName())) {
+                    target = m;
+                    break;
+                }
+            }
+            if (target == null) {
+                return "ERR no clearWallpaper";
+            }
+            target.setAccessible(true);
+            int params = target.getParameterCount();
+            if (params == 3) {
+                target.invoke(iwm, pkg, which, 0);
+            } else if (params == 2) {
+                target.invoke(iwm, which, 0);
+            } else {
+                return "ERR unknown clearWallpaper param count " + params;
+            }
+            return "OK clear which=" + which;
+        } catch (Throwable t) {
+            Throwable c = t.getCause() != null ? t.getCause() : t;
+            c.printStackTrace();
+            return "ERR " + c;
         }
     }
 

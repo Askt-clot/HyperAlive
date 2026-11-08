@@ -1,7 +1,6 @@
 package com.qihang.aod;
 
 import android.app.Dialog;
-import android.app.WallpaperManager;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.BitmapFactory;
@@ -1435,13 +1434,16 @@ public class EditorActivity extends UiActivity {
                     if (!db.contains(ALIVE_PKG)) {
                         append("⓪ 同步 LSPosed 作用域加入 " + ALIVE_PKG);
                         Root.lsposedSync(this,
-                                new String[]{"system", "com.android.systemui", "miui.systemui.plugin", "com.miui.aod", ALIVE_PKG});
+                                new String[]{"system", "com.android.systemui", "miui.systemui.plugin", "com.miui.aod", "com.qihang.aod", ALIVE_PKG});
                     }
                 }
                 append("① 动态壁纸统管桌面+锁屏+息屏 (which=3)：" + wallpaper);
                 sb.append("动态壁纸(三态)=").append(setWallpaperFromLibrary(3));
                 LastSet.save(this, desktopSource, wallpaper);
                 sendMode(Motion.HOME, "应用动态壁纸");
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    sendMode(Motion.HOME, "应用动态壁纸(延时对齐)");
+                }, 250);
                 return sb.toString();
             }
             // ★ 自绘照片模式（跟随锁屏 或 独立桌面照片）：
@@ -1454,6 +1456,7 @@ public class EditorActivity extends UiActivity {
                 desktopSource = followLock ? LastSet.KIND_FOLLOW : LastSet.KIND_PHOTO;
             }
             LastSet.save(this, desktopSource, null);
+            PhotoStore.syncToDe(this);
             append("① 原子设置双槽自定义壁纸 (which=1 桌面 + which=2 锁屏/息屏)");
             String dualRes = Root.setDualWallpaper(this,
                     getPackageName(),
@@ -1462,6 +1465,11 @@ public class EditorActivity extends UiActivity {
             sb.append("双槽自定义壁纸=").append(dualRes);
             sb.append(" · 模式=").append(desktopSource == LastSet.KIND_FOLLOW ? "跟随锁屏" : "独立桌面(渐变过渡)");
             sendReloadPhoto();
+            sendMode(Motion.HOME, "应用自定义壁纸");
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                sendReloadPhoto();
+                sendMode(Motion.HOME, "应用自定义壁纸(延时对齐)");
+            }, 250);
             return sb.toString();
         });
         toast("已应用");

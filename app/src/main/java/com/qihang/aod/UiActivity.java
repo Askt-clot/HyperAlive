@@ -110,28 +110,28 @@ public abstract class UiActivity extends Activity {
 
     /** 首页顶部那种「● 文字」状态点。 */
     protected static final class Dot {
-        android.widget.LinearLayout box;
-        android.widget.TextView text;
+        LinearLayout box;
+        TextView text;
         android.view.View circle;
     }
 
     protected Dot dot(String label) {
         Dot d = new Dot();
-        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
-        box.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-        box.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
         android.view.View circle = new android.view.View(this);
         android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
         g.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         g.setColor(0xFF9A9A9E);
         circle.setBackground(g);
-        box.addView(circle, new android.widget.LinearLayout.LayoutParams(ui.dp(8), ui.dp(8)));
-        android.widget.TextView tv = new android.widget.TextView(this);
+        box.addView(circle, new LinearLayout.LayoutParams(ui.dp(8), ui.dp(8)));
+        TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setTextColor(ui.titleColor());
-        android.widget.LinearLayout.LayoutParams tp =
-                new android.widget.LinearLayout.LayoutParams(-2, -2);
+        LinearLayout.LayoutParams tp =
+                new LinearLayout.LayoutParams(-2, -2);
         tp.setMarginStart(ui.dp(6));
         box.addView(tv, tp);
         d.box = box;
@@ -156,7 +156,7 @@ public abstract class UiActivity extends Activity {
      * 熄屏=用最后设置的锁屏照片按启航真实几何合成，锁屏=最后设的锁屏照片，桌面=最后设的桌面。
      * 不去读系统实时状态，所以桌面被其它应用改过也不影响展示。
      */
-    protected void attachLivePreview(android.widget.ImageView iv, int mode) {
+    protected void attachLivePreview(ImageView iv, int mode) {
         new Thread(() -> {
             final android.graphics.Bitmap bmp = LastSet.preview(this, mode);
             if (bmp == null) {

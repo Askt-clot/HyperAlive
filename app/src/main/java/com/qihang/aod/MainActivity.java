@@ -2,20 +2,13 @@ package com.qihang.aod;
 
 import android.app.AlertDialog;
 import android.content.Intent;
-import android.graphics.BitmapFactory;
-import android.graphics.drawable.GradientDrawable;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.SeekBar;
-import android.widget.Switch;
 import android.widget.TextView;
-
-import java.io.InputStream;
 
 /**
  * 首页 —— 布局与 OpenAlive 的 {@code HomeActivity} 保持一致（实机对齐）：
@@ -80,6 +73,11 @@ public class MainActivity extends UiActivity {
         // ---- 通知光效（未实现，占位）----
         addSpacedCard(leftCard("通知光效", "动静之间 传达通知", icon("ic_flash_notification", "ic_float_notification"),
                 v -> startActivity(new Intent(this, NotificationActivity.class))));
+
+        // ---- 恢复默认壁纸 ----
+        addSpacedCard(leftCard("恢复默认壁纸", "还原为 HyperOS 原生静态壁纸（禁用模块前建议执行）",
+                icon("ic_wallpaper", "ic_settings_backup_restore"),
+                v -> confirmRestoreDefaultWallpaper()));
 
         probeStatus();
     }
@@ -216,17 +214,24 @@ public class MainActivity extends UiActivity {
     /** 绿点状态：LSPosed（lspd 在跑 + 库里启用 + 作用域含 system/systemui）与 root。 */
     private void probeStatus() {
         new Thread(() -> {
+            try {
+                PhotoStore.syncToDe(this);
+            } catch (Throwable ignored) {}
             boolean root = Root.hasRoot();
             boolean lspd = !Root.su("ps -A | grep -c ' lspd$'", 8000).trim().equals("0");
             String db = Root.appProcess(this, "com.qihang.aod.root.LspDb", "-get", getPackageName());
-            if (root && db.contains("enabled=1") && !db.contains("com.miui.aod")) {
+            if (root && db.contains("enabled=1") && (!db.contains("system")
+                    || !db.contains("com.android.systemui")
+                    || !db.contains("miui.systemui.plugin")
+                    || !db.contains("com.miui.aod")
+                    || !db.contains("com.qihang.aod"))) {
                 Root.lsposedSync(this,
-                        new String[]{"system", "com.android.systemui", "miui.systemui.plugin", "com.miui.aod"});
+                        new String[]{"system", "com.android.systemui", "miui.systemui.plugin", "com.miui.aod", "com.qihang.aod"});
                 db = Root.appProcess(this, "com.qihang.aod.root.LspDb", "-get", getPackageName());
             }
             boolean inScope = db.contains("enabled=1") && db.contains("system")
                     && db.contains("com.android.systemui");
-            boolean lsp = lspd && inScope;
+            boolean lsp = LspState.isLsposedHooked() || LspState.isSystemServerHooked() || (lspd && inScope);
             Log.i(TAG, "状态探测 root=" + root + " lspd=" + lspd + " inScope=" + inScope + " db=" + db.trim());
             runOnUiThread(() -> {
                 setDot(lspDot, "LSP " + (lsp ? "已激活" : "未激活"), lsp);
@@ -267,8 +272,53 @@ public class MainActivity extends UiActivity {
         }
         btn.setClickable(true);
         btn.setContentDescription("更多");
-        btn.setOnClickListener(v -> showRestartScopeDialog());
+        btn.setOnClickListener(v -> showMoreMenuDialog());
         return btn;
+    }
+
+    /** 更多菜单：重启作用域 / 恢复默认壁纸。 */
+    private void showMoreMenuDialog() {
+        final String[] items = new String[]{"重启作用域", "恢复默认壁纸"};
+        boolean isNight = (getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        int theme = isNight ? AlertDialog.THEME_DEVICE_DEFAULT_DARK : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT;
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, theme);
+        builder.setTitle("更多操作");
+        builder.setItems(items, (dialog, which) -> {
+            if (which == 0) {
+                showRestartScopeDialog();
+            } else if (which == 1) {
+                confirmRestoreDefaultWallpaper();
+            }
+        });
+        builder.show();
+    }
+
+    /** 二次确认弹窗：恢复 HyperOS 原生静态壁纸。 */
+    private void confirmRestoreDefaultWallpaper() {
+        boolean isNight = (getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        int theme = isNight ? AlertDialog.THEME_DEVICE_DEFAULT_DARK : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT;
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, theme);
+        builder.setTitle("恢复默认壁纸");
+        builder.setMessage("确定要将壁纸还原为 HyperOS 原生静态壁纸吗？\n\n如果在 LSPosed 中禁用本模块，请务必先恢复默认壁纸，以避免开机时产生壁纸异常。");
+        builder.setNegativeButton("取消", null);
+        builder.setPositiveButton("立即恢复", (dialog, which) -> {
+            toast("正在恢复系统原生壁纸…");
+            new Thread(() -> {
+                boolean ok = Root.restoreDefaultWallpaper(this);
+                runOnUiThread(() -> {
+                    if (ok) {
+                        toast("已成功恢复为系统原生壁纸！");
+                    } else {
+                        toast("恢复壁纸失败，请检查 ROOT 权限");
+                    }
+                });
+            }, "qihang-restore-wall").start();
+        });
+        builder.show();
     }
 
     /** 弹出重启作用域对话框（模块在 LSPosed 中申请的各作用域，支持多选）。 */
