@@ -24,7 +24,13 @@ public final class LspDb {
                 return;
             }
             if (args.length >= 2 && "-get".equals(args[0])) {
-                System.out.println("LSPDB " + get(DEFAULT_DB, args[1]));
+                int userId = 0;
+                if (args.length >= 3) {
+                    try {
+                        userId = Integer.parseInt(args[2]);
+                    } catch (Throwable ignored) {}
+                }
+                System.out.println("LSPDB " + get(DEFAULT_DB, args[1], userId));
                 return;
             }
             if (args.length < 2) {
@@ -43,26 +49,43 @@ public final class LspDb {
      * 在 PC 上打开会看到旧快照，会误判成"同步失败"。
      */
     public static String get(String dbPath, String modulePkg) {
+        return get(dbPath, modulePkg, 0);
+    }
+
+    public static String get(String dbPath, String modulePkg, int userId) {
         SQLiteDatabase db = null;
         android.database.Cursor c = null;
         try {
             db = SQLiteDatabase.openDatabase(dbPath, null, SQLiteDatabase.OPEN_READONLY);
             c = db.rawQuery("SELECT m.apk_path, s.enabled FROM modules m"
-                    + " JOIN modules_state s USING(module_pkg_name) WHERE m.module_pkg_name = ?",
-                    new String[]{modulePkg});
+                    + " JOIN modules_state s ON m.module_pkg_name = s.module_pkg_name"
+                    + " WHERE m.module_pkg_name = ? AND s.user_id = ?",
+                    new String[]{modulePkg, String.valueOf(userId)});
             if (!c.moveToFirst()) {
-                return "get " + modulePkg + " path=<none> enabled=-1";
+                android.database.Cursor m = null;
+                String path = "<none>";
+                try {
+                    m = db.rawQuery("SELECT apk_path FROM modules WHERE module_pkg_name = ?",
+                            new String[]{modulePkg});
+                    if (m.moveToFirst()) {
+                        path = m.getString(0);
+                    }
+                } finally {
+                    if (m != null) m.close();
+                }
+                return "get " + modulePkg + " user=" + userId + " path=" + path + " enabled=-1";
             }
             String path = c.getString(0);
             int enabled = c.getInt(1);
             StringBuilder sc = new StringBuilder();
             android.database.Cursor s = db.rawQuery(
-                    "SELECT app_pkg_name FROM scope WHERE module_pkg_name = ?", new String[]{modulePkg});
+                    "SELECT app_pkg_name FROM scope WHERE module_pkg_name = ? AND user_id = ?",
+                    new String[]{modulePkg, String.valueOf(userId)});
             while (s.moveToNext()) {
                 sc.append(s.getString(0)).append(',');
             }
             s.close();
-            return "get " + modulePkg + " path=" + path + " enabled=" + enabled + " scope=" + sc;
+            return "get " + modulePkg + " user=" + userId + " path=" + path + " enabled=" + enabled + " scope=" + sc;
         } catch (Throwable t) {
             return "get ERR " + t;
         } finally {

@@ -75,7 +75,7 @@ public class ClockSettings {
     };
 
     public static class Config {
-        public boolean enabled = true; // 自由开关：true = 模块时间样式，false = 系统原生时钟
+        public boolean enabled = false; // 默认原生；用户可分别启用 AOD / 锁屏魅族时钟
         public int style = STYLE_DOUBLE_STACK;
         public int color = 0xFFFFFFFF;
         public float scale = 1.0f;
@@ -127,7 +127,7 @@ public class ClockSettings {
             try {
                 Context safe = getSafeContext(ctx);
                 SharedPreferences sp = (safe != null ? safe : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-                boolean defEnabled = sp.getBoolean(KEY_CLOCK_ENABLED, true);
+                boolean defEnabled = sp.getBoolean(KEY_CLOCK_ENABLED, false);
                 int defStyle = sp.getInt(KEY_STYLE, STYLE_DOUBLE_STACK);
                 int defColor = sp.getInt(KEY_COLOR, 0xFFFFFFFF);
                 float defScale = sp.getFloat(KEY_SCALE, 1.0f);
@@ -155,7 +155,7 @@ public class ClockSettings {
             try {
                 Context safe = getSafeContext(ctx);
                 SharedPreferences sp = (safe != null ? safe : ctx).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-                boolean defEnabled = sp.getBoolean(KEY_CLOCK_ENABLED, true);
+                boolean defEnabled = sp.getBoolean(KEY_CLOCK_ENABLED, false);
                 int defStyle = sp.getInt(KEY_STYLE, STYLE_DOUBLE_STACK);
                 int defColor = sp.getInt(KEY_COLOR, 0xFFFFFFFF);
                 float defScale = sp.getFloat(KEY_SCALE, 1.0f);
@@ -196,6 +196,8 @@ public class ClockSettings {
         return get(ctx, Motion.LOCK);
     }
 
+    private static boolean sExternalConfigLoaded;
+
     public static Config get(Context ctx, int mode) {
         if (ctx == null) return new Config();
         if ("com.qihang.aod".equals(ctx.getPackageName())) {
@@ -206,7 +208,7 @@ public class ClockSettings {
         // SystemUI 或其他外部宿主：首先检查本地是否有持久化缓存
         try {
             SharedPreferences sp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-            if (sp.contains(keyStyle) || sp.contains(KEY_STYLE)) {
+            if (sExternalConfigLoaded && (sp.contains(keyStyle) || sp.contains(KEY_STYLE))) {
                 return isLock ? getLockDirect(ctx) : getAodDirect(ctx);
             }
         } catch (Throwable ignored) {
@@ -218,6 +220,7 @@ public class ClockSettings {
                 Config aod = extractFromBundle(b, true);
                 Config lock = extractFromBundle(b, false);
                 saveLocal(ctx, aod, lock);
+                sExternalConfigLoaded = true;
                 if (b.containsKey(AodStyleSettings.KEY_STYLE)) {
                     try {
                         ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -269,7 +272,7 @@ public class ClockSettings {
         String kOffset = aod ? KEY_AOD_OFFSET_Y : KEY_LOCK_OFFSET_Y;
         String kLunar = aod ? KEY_AOD_SHOW_LUNAR : KEY_LOCK_SHOW_LUNAR;
 
-        boolean defEnabled = b.getBoolean(KEY_CLOCK_ENABLED, true);
+        boolean defEnabled = b.getBoolean(KEY_CLOCK_ENABLED, false);
         int defStyle = b.getInt(KEY_STYLE, STYLE_DOUBLE_STACK);
         int defColor = b.getInt(KEY_COLOR, 0xFFFFFFFF);
         float defScale = b.getFloat(KEY_SCALE, 1.0f);
@@ -447,7 +450,7 @@ public class ClockSettings {
     }
 
     public static boolean isClockEnabled(Context ctx, int mode) {
-        return get(ctx, mode).enabled;
+        return (mode == Motion.AOD || mode == Motion.LOCK) && get(ctx, mode).enabled;
     }
 
     public static int getStyle(Context ctx) {

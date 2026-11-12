@@ -15,12 +15,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * 魅族「留光」等遮罩序列帧流式解码与 LRU 缓存器（61 帧过渡 000..060.rgbz + start.rgbz(61) + end.rgbz(62)）。
+ * 魅族「留光」「星月」等遮罩序列帧流式解码与 LRU 缓存器。
  *
  * 改进特性：
- *   1. 常驻锁定 start.rgbz (61, AOD 稳态) 与 end.rgbz (62, 锁屏/桌面稳态)，稳态零解码开销；
- *   2. 过渡帧 (0..60) 后台异步预取 + GL 线程未命中时同步兜底解码，保证 120Hz 过渡每一帧遮罩都 100% 命中不黑屏；
- *   3. 记录当前已上传的帧索引，同一帧不重复执行 glTexSubImage2D，稳态 GPU 带宽开销为 0。
+ *   1. 常驻锁定 start.rgbz (AOD 稳态) 与 end.rgbz (锁屏/桌面稳态)，稳态零解码开销；
+ *   2. 过渡帧后台异步预取 + GL 线程未命中时同步兜底解码，保证高刷过渡每一帧遮罩都 100% 命中不黑屏；
+ *   3. 记录当前已上传的帧索引，同一帧不重复执行 glTexSubImage2D，稳态 GPU 带宽开销为 0；
+ *   4. 支持按视觉风格动态配置帧数、帧率与微秒范围（如留光 61 帧 120Hz、星月 32 帧 60Hz）。
  */
 final class MaskFrames implements AutoCloseable {
 
@@ -32,6 +33,12 @@ final class MaskFrames implements AutoCloseable {
 
     private final AssetManager assets;
     private final String dir;
+    private final int count;
+    private final int start;
+    private final int end;
+    private final int fps;
+    private final int endMicros;
+
     private final Object lock = new Object();
     private final LinkedHashMap<Integer, ByteBuffer> cache = new LinkedHashMap<>(CACHE_LIMIT, 0.75f, true);
     private final ArrayDeque<ByteBuffer> pool = new ArrayDeque<>();
@@ -39,7 +46,7 @@ final class MaskFrames implements AutoCloseable {
     private ByteBuffer pinnedStart;
     private ByteBuffer pinnedEnd;
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "LiuguangMaskDec");
+        Thread t = new Thread(r, "PhotoMaskDec");
         t.setDaemon(true);
         return t;
     });
@@ -48,17 +55,47 @@ final class MaskFrames implements AutoCloseable {
     private boolean textureAllocated = false;
 
     MaskFrames(Context context, String styleDir) {
+        this(context, styleDir, 61, 120, 483667);
+    }
+
+    MaskFrames(Context context, String styleDir, int frameCount, int fps, int endMicros) {
         this.assets = context.getApplicationContext().getAssets();
         this.dir = "masks/" + styleDir;
+        this.count = frameCount;
+        this.start = frameCount;
+        this.end = frameCount + 1;
+        this.fps = fps;
+        this.endMicros = endMicros;
         for (int i = 0; i < CACHE_LIMIT + 2; i++) {
             pool.add(ByteBuffer.allocateDirect(MaskDecoder.FRAME_BYTES).order(ByteOrder.nativeOrder()));
         }
-        // 异步预热 start(61)、end(62) 及首尾过渡帧
-        prefetch(START);
-        prefetch(END);
+        // 异步预热 start、end 及首尾过渡帧
+        prefetch(start);
+        prefetch(end);
         prefetch(0);
         prefetch(1);
-        prefetch(COUNT - 1);
+        prefetch(count - 1);
+    }
+
+    static MaskFrames forStyle(Context context, int style) {
+        if (style == AodStyleSettings.STYLE_MOON) {
+            return new MaskFrames(context, "moon", 32, 60, 516667);
+        }
+        return new MaskFrames(context, "leave_light", 61, 120, 483667);
+    }
+
+    int startIndex() {
+        return start;
+    }
+
+    int endIndex() {
+        return end;
+    }
+
+    int getFrameIndex(long micros) {
+        if (micros <= 0) return start;
+        if (micros >= endMicros) return end;
+        return Math.min(count - 1, Math.round(micros * (float) fps / 1_000_000f));
     }
 
     static int frameIndex(long micros) {
@@ -67,21 +104,32 @@ final class MaskFrames implements AutoCloseable {
         return Math.min(COUNT - 1, Math.round(micros * 120f / 1_000_000f));
     }
 
+    static int frameIndexForStyle(int style, long micros) {
+        if (style == AodStyleSettings.STYLE_MOON) {
+            if (micros <= 0) return 32;
+            if (micros >= 516667) return 33;
+            return Math.min(31, Math.round(micros * 60f / 1_000_000f));
+        }
+        if (micros <= 0) return 61;
+        if (micros >= 483667) return 62;
+        return Math.min(60, Math.round(micros * 120f / 1_000_000f));
+    }
+
     boolean upload(int index, int textureId) {
         if (textureId == 0 || closed) {
             return false;
         }
         // 预取后续帧（兼顾正向展开与反向回缩）
-        if (index == START) {
+        if (index == start) {
             prefetch(0);
             prefetch(1);
             prefetch(2);
-        } else if (index == END) {
-            prefetch(COUNT - 1);
-            prefetch(COUNT - 2);
+        } else if (index == end) {
+            prefetch(count - 1);
+            prefetch(count - 2);
         } else {
             for (int d = 1; d <= 3; d++) {
-                if (index + d < COUNT) prefetch(index + d);
+                if (index + d < count) prefetch(index + d);
                 if (index - d >= 0) prefetch(index - d);
             }
         }
@@ -121,10 +169,10 @@ final class MaskFrames implements AutoCloseable {
 
     private ByteBuffer getOrDecodeSync(int index) {
         synchronized (lock) {
-            if (index == START && pinnedStart != null) {
+            if (index == start && pinnedStart != null) {
                 return pinnedStart;
             }
-            if (index == END && pinnedEnd != null) {
+            if (index == end && pinnedEnd != null) {
                 return pinnedEnd;
             }
             ByteBuffer hit = cache.get(index);
@@ -132,17 +180,17 @@ final class MaskFrames implements AutoCloseable {
                 return hit;
             }
         }
-        // 未命中缓存时同步解码当前帧，保证 120Hz 过渡绝不闪黑或丢帧
+        // 未命中缓存时同步解码当前帧，保证高刷过渡绝不闪黑或丢帧
         ByteBuffer syncBuf = ByteBuffer.allocateDirect(MaskDecoder.FRAME_BYTES).order(ByteOrder.nativeOrder());
         if (!MaskDecoder.decode(assets, path(index), syncBuf)) {
             return null;
         }
         synchronized (lock) {
-            if (index == START) {
+            if (index == start) {
                 pinnedStart = syncBuf;
                 return pinnedStart;
             }
-            if (index == END) {
+            if (index == end) {
                 pinnedEnd = syncBuf;
                 return pinnedEnd;
             }
@@ -151,26 +199,26 @@ final class MaskFrames implements AutoCloseable {
                 return existing;
             }
             if (cache.size() >= CACHE_LIMIT) {
-                IteratorEvict();
+                iteratorEvict();
             }
             cache.put(index, syncBuf);
             return syncBuf;
         }
     }
 
-    private void IteratorEvict() {
+    private void iteratorEvict() {
         Map.Entry<Integer, ByteBuffer> eldest = cache.entrySet().iterator().next();
         cache.remove(eldest.getKey());
         pool.add(eldest.getValue());
     }
 
     private void prefetch(int index) {
-        if (index < 0 || index > END || closed) {
+        if (index < 0 || index > end || closed) {
             return;
         }
         synchronized (lock) {
-            if (index == START && pinnedStart != null) return;
-            if (index == END && pinnedEnd != null) return;
+            if (index == start && pinnedStart != null) return;
+            if (index == end && pinnedEnd != null) return;
             if (cache.containsKey(index) || !inflight.add(index)) {
                 return;
             }
@@ -185,8 +233,8 @@ final class MaskFrames implements AutoCloseable {
                 inflight.remove(index);
                 return;
             }
-            if ((index == START && pinnedStart != null)
-                    || (index == END && pinnedEnd != null)
+            if ((index == start && pinnedStart != null)
+                    || (index == end && pinnedEnd != null)
                     || cache.containsKey(index)) {
                 inflight.remove(index);
                 return;
@@ -211,11 +259,11 @@ final class MaskFrames implements AutoCloseable {
                 pool.add(buffer);
                 return;
             }
-            if (index == START) {
+            if (index == start) {
                 pinnedStart = buffer;
                 return;
             }
-            if (index == END) {
+            if (index == end) {
                 pinnedEnd = buffer;
                 return;
             }
@@ -224,15 +272,15 @@ final class MaskFrames implements AutoCloseable {
                 return;
             }
             while (cache.size() >= CACHE_LIMIT) {
-                IteratorEvict();
+                iteratorEvict();
             }
             cache.put(index, buffer);
         }
     }
 
     private String path(int index) {
-        if (index == START) return dir + "/start.rgbz";
-        if (index == END) return dir + "/end.rgbz";
+        if (index == start) return dir + "/start.rgbz";
+        if (index == end) return dir + "/end.rgbz";
         return String.format(Locale.US, "%s/%03d.rgbz", dir, index);
     }
 

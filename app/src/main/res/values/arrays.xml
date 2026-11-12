@@ -6,6 +6,7 @@
         <item>com.android.systemui</item>
         <item>miui.systemui.plugin</item>
         <item>com.miui.aod</item>
+        <item>com.android.thememanager</item>
         <item>com.qihang.aod</item>
     </string-array>
 </resources>

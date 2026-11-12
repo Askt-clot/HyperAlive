@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.qihang.aod"
-    android:versionCode="20261107"
-    android:versionName="1.0.2">
+    android:versionCode="20261111"
+    android:versionName="1.0.3">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
 
@@ -16,6 +16,8 @@
         <package android:name="com.android.settings" />
         <package android:name="com.flyme.alivewallpaper" />
         <package android:name="com.miui.miwallpaper" />
+        <package android:name="com.android.thememanager" />
+        <package android:name="com.miui.aod" />
         <!-- Android 11+ 包可见性：要能查到/直达系统相册 -->
         <intent>
             <action android:name="android.intent.action.PICK" />
@@ -99,6 +101,12 @@
         <provider
             android:name=".ClockConfigProvider"
             android:authorities="com.qihang.aod.clockconfig"
+            android:exported="true"
+            android:directBootAware="true" />
+
+        <provider
+            android:name=".WallpaperPreviewProvider"
+            android:authorities="com.qihang.aod.wallpaperpreview"
             android:exported="true"
             android:directBootAware="true" />
 

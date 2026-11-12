@@ -109,11 +109,7 @@ final class LensRenderer implements Runnable {
         public void run() {
             if (previewSurface == null) {
                 int latest = AodStyleSettings.getStyle(appContext);
-                if (latest != aodStyle) {
-                    aodStyle = latest;
-                    pendingDirty = true;
-                    wake();
-                }
+                setAodStyle(latest);
             }
         }
     };
@@ -249,6 +245,10 @@ final class LensRenderer implements Runnable {
         wake();
     }
 
+    boolean isTransitionRunning() {
+        return transitionRunning || (motion != null && motion.animating());
+    }
+
     /**
      * 先把状态对齐到「{@code from}→{@code to} 已播 {@code elapsedMs}」，再续跑到 {@code mode}。
      * 桌面 Engine 在锁屏期间不渲染、没有进度，靠它接手锁屏侧已播的那一段。
@@ -313,8 +313,18 @@ final class LensRenderer implements Runnable {
     }
 
     void setAodStyle(int style) {
-        if (aodStyle != style) {
-            aodStyle = style;
+        int norm = (style == AodStyleSettings.STYLE_LEAVE_LIGHT) ? AodStyleSettings.STYLE_LEAVE_LIGHT
+                : (style == AodStyleSettings.STYLE_MOON) ? AodStyleSettings.STYLE_MOON
+                : AodStyleSettings.STYLE_SET_SAIL;
+        if (aodStyle != norm) {
+            aodStyle = norm;
+            AodStyleSettings.updateCachedStyle(norm);
+            if (motion != null) {
+                motion.setAodStyle(norm);
+            }
+            if (liuguangPipeline != null) {
+                liuguangPipeline.setStyle(norm);
+            }
             blurAppliedLast = false;
             pendingDirty = true;
             wake();
@@ -367,13 +377,6 @@ final class LensRenderer implements Runnable {
             }
             while (running) {
                 long frameStartNanos = System.nanoTime();
-                if (previewSurface == null) {
-                    int latestStyle = AodStyleSettings.getStyle(appContext);
-                    if (latestStyle != aodStyle) {
-                        aodStyle = latestStyle;
-                        pendingDirty = true;
-                    }
-                }
                 if (pendingPhotoReloadForce) {
                     pendingPhotoReloadForce = false;
                     pendingPhotoReload = false;
@@ -553,9 +556,9 @@ final class LensRenderer implements Runnable {
         }
     }
 
-    /** 当前实际运动引擎模式。 */
+    /** 当前实际运动引擎模式。若有新指令待处理，优先返回 pendingMode。 */
     int currentMotionMode() {
-        return motion != null ? motion.mode : pendingMode;
+        return pendingDirty ? pendingMode : (motion != null ? motion.mode : pendingMode);
     }
 
     Motion motion() {
@@ -870,6 +873,7 @@ final class LensRenderer implements Runnable {
             surfaceHeight = size[1];
             Motion oldMotion = motion;
             motion = new Motion(surfaceWidth, surfaceHeight);
+            motion.setAodStyle(aodStyle);
             if (oldMotion != null) {
                 motion.copyFrom(oldMotion);
             } else {
@@ -896,20 +900,33 @@ final class LensRenderer implements Runnable {
         motion.advance(nowNanos);
         transitionRunning = motion.animating();
 
-        if (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT) {
+        if (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT || aodStyle == AodStyleSettings.STYLE_MOON) {
             if (liuguangPipeline == null) {
-                liuguangPipeline = new LiuguangPipeline(appContext);
+                liuguangPipeline = new LiuguangPipeline(appContext, aodStyle);
+            } else {
+                liuguangPipeline.setStyle(aodStyle);
+            }
+            int photoTex = wallpaperTexture;
+            float blurRadius = motion.frameBlur();
+            boolean blurNow = blurRadius >= 2f && aodLayerVisible();
+            if (aodStyle == AodStyleSettings.STYLE_MOON && blurNow) {
+                if (gaussianBlur == null) {
+                    gaussianBlur = new GaussianBlur();
+                }
+                gaussianBlur.ensure(appContext, surfaceWidth, surfaceHeight);
+                photoTex = gaussianBlur.blur(wallpaperTexture, blurRadius);
             }
             int homeTex = homeWallpaperTexture != 0 ? homeWallpaperTexture : wallpaperTexture;
             int frameTex = frameWallpaperTexture != 0 ? frameWallpaperTexture : wallpaperTexture;
-            liuguangPipeline.render(wallpaperTexture, homeTex, frameTex, motion.homeRatio(), motion, surfaceWidth, surfaceHeight);
+            liuguangPipeline.render(photoTex, homeTex, frameTex, motion.homeRatio(), motion, surfaceWidth, surfaceHeight, aodStyle);
             long nowMs = nowNanos / 1_000_000L;
             if (nowMs - lastBeatMs > 10000) {
                 lastBeatMs = nowMs;
+                String tag = (aodStyle == AodStyleSettings.STYLE_MOON) ? "[星月]" : "[留光]";
                 Log.i(TAG, String.format(java.util.Locale.US,
-                        "[留光] draw mode=%d scale=%.3f rot=%.1f micros=%d alpha=%.2f homeRatio=%.2f tr=%d anim=%s",
-                        motion.mode, motion.frameScale(), motion.frameRotation(), motion.frameMicros(),
-                        motion.framePhotoAlpha(), motion.homeRatio(), motion.lastTransition(), motion.animating()));
+                        "%s draw mode=%d scale=%.3f rot=%.1f blur=%.1f micros=%d alpha=%.2f homeRatio=%.2f tr=%d anim=%s",
+                        tag, motion.mode, motion.frameScale(), motion.frameRotation(), motion.frameBlur(),
+                        motion.frameMicros(), motion.framePhotoAlpha(), motion.homeRatio(), motion.lastTransition(), motion.animating()));
             }
             return;
         }

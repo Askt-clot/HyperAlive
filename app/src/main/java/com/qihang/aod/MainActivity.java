@@ -27,6 +27,7 @@ public class MainActivity extends UiActivity {
 
     private Dot lspDot;
     private Dot rootDot;
+    private final java.util.concurrent.atomic.AtomicLong probeSeq = new java.util.concurrent.atomic.AtomicLong(0);
 
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
@@ -78,8 +79,6 @@ public class MainActivity extends UiActivity {
         addSpacedCard(leftCard("恢复默认壁纸", "还原为 HyperOS 原生静态壁纸（禁用模块前建议执行）",
                 icon("ic_wallpaper", "ic_settings_backup_restore"),
                 v -> confirmRestoreDefaultWallpaper()));
-
-        probeStatus();
     }
 
     /** 独立卡片 + 卡片间距（首页几个选项之间要有空隙）。 */
@@ -167,6 +166,7 @@ public class MainActivity extends UiActivity {
             v.startScene();
         }
         syncClockPreview();
+        probeStatus();
     }
 
     @Override
@@ -211,30 +211,42 @@ public class MainActivity extends UiActivity {
         item.setOnClickListener(v -> startActivity(EditorActivity.intent(this, scene)));
     }
 
-    /** 绿点状态：LSPosed（lspd 在跑 + 库里启用 + 作用域含 system/systemui）与 root。 */
+    /** 绿点状态：只读探测当前用户的 LSPosed 状态与 root，去重异步过期结果。 */
     private void probeStatus() {
+        final long seq = probeSeq.incrementAndGet();
         new Thread(() -> {
             try {
                 PhotoStore.syncToDe(this);
             } catch (Throwable ignored) {}
             boolean root = Root.hasRoot();
-            boolean lspd = !Root.su("ps -A | grep -c ' lspd$'", 8000).trim().equals("0");
-            String db = Root.appProcess(this, "com.qihang.aod.root.LspDb", "-get", getPackageName());
-            if (root && db.contains("enabled=1") && (!db.contains("system")
-                    || !db.contains("com.android.systemui")
-                    || !db.contains("miui.systemui.plugin")
-                    || !db.contains("com.miui.aod")
-                    || !db.contains("com.qihang.aod"))) {
-                Root.lsposedSync(this,
-                        new String[]{"system", "com.android.systemui", "miui.systemui.plugin", "com.miui.aod", "com.qihang.aod"});
-                db = Root.appProcess(this, "com.qihang.aod.root.LspDb", "-get", getPackageName());
+            LspState.State lspState = LspState.queryLspState(this);
+
+            if (seq != probeSeq.get() || isFinishing() || isDestroyed()) {
+                return;
             }
-            boolean inScope = db.contains("enabled=1") && db.contains("system")
-                    && db.contains("com.android.systemui");
-            boolean lsp = LspState.isLsposedHooked() || LspState.isSystemServerHooked() || (lspd && inScope);
-            Log.i(TAG, "状态探测 root=" + root + " lspd=" + lspd + " inScope=" + inScope + " db=" + db.trim());
+
+            if (lspState == LspState.State.DISABLED) {
+                LspState.checkFallbackIfInactiveAsync(this);
+            }
+
+            Log.i(TAG, "状态探测 root=" + root + " lspState=" + lspState);
             runOnUiThread(() -> {
-                setDot(lspDot, "LSP " + (lsp ? "已激活" : "未激活"), lsp);
+                if (seq != probeSeq.get() || isFinishing() || isDestroyed()) {
+                    return;
+                }
+                String lspText;
+                boolean lspOk = false;
+                if (lspState == LspState.State.ENABLED) {
+                    lspText = "LSP 已激活";
+                    lspOk = true;
+                } else if (lspState == LspState.State.DISABLED) {
+                    lspText = "LSP 已停用";
+                    lspOk = false;
+                } else {
+                    lspText = "LSP 未激活";
+                    lspOk = false;
+                }
+                setDot(lspDot, lspText, lspOk);
                 setDot(rootDot, "ROOT " + (root ? "已授权" : "未授权"), root);
             });
         }, "qihang-status").start();

@@ -1196,10 +1196,10 @@ public class EditorActivity extends UiActivity {
 
         int curStyle = mPendingAodVisualStyle != -1
                 ? mPendingAodVisualStyle : AodStyleSettings.getStyle(this);
-        int[] styles = {AodStyleSettings.STYLE_SET_SAIL, AodStyleSettings.STYLE_LEAVE_LIGHT};
-        String[] titles = {"启航", "留光"};
-        String[] subs = {"圆形透镜 · 自转扩散", "拍立得相框 · 倾斜绽放"};
-        String[] assets = {"preview/aod_qihang.png", "preview/aod_liuguang.png"};
+        int[] styles = {AodStyleSettings.STYLE_SET_SAIL, AodStyleSettings.STYLE_LEAVE_LIGHT, AodStyleSettings.STYLE_MOON};
+        String[] titles = {"启航", "留光", "星月"};
+        String[] subs = {"圆形透镜 · 自转扩散", "拍立得相框 · 倾斜绽放", "弯月星芒 · 朦胧绽放"};
+        String[] assets = {"preview/aod_qihang.png", "preview/aod_liuguang.png", "preview/aod_moon.png"};
 
         final FrameLayout[] cardViews = new FrameLayout[styles.length];
 
@@ -1434,7 +1434,8 @@ public class EditorActivity extends UiActivity {
                     if (!db.contains(ALIVE_PKG)) {
                         append("⓪ 同步 LSPosed 作用域加入 " + ALIVE_PKG);
                         Root.lsposedSync(this,
-                                new String[]{"system", "com.android.systemui", "miui.systemui.plugin", "com.miui.aod", "com.qihang.aod", ALIVE_PKG});
+                                new String[]{"system", "com.android.systemui", "miui.systemui.plugin", "com.miui.aod",
+                                        "com.android.thememanager", "com.qihang.aod", ALIVE_PKG});
                     }
                 }
                 append("① 动态壁纸统管桌面+锁屏+息屏 (which=3)：" + wallpaper);

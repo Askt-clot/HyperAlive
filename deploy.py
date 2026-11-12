@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""HyperAlive 1.1 — 部署 / 运维 / 联调脚本（Windows 主机 + adb + root）
+"""HyperAlive (qihang_lsp) —— 部署 / 运维 / 联调脚本（Windows 主机 + adb + root）。
 
 用法：
   python deploy.py build       只执行构建
   python deploy.py install     构建 + 安装 + 注册 LSPosed 作用域 + 重启 lspd/zygote
-  python deploy.py setwall     设置双槽位壁纸（桌面=QihangHomeWallpaper, 锁屏=QihangWallpaper）
+  python deploy.py setwall     设置单槽位统一壁纸（which 3 = 桌面 + 锁屏一体化无缝衔接，根除双槽切换黑闪）
   python deploy.py unlock      解锁屏幕
   python deploy.py mode 0|1|2  给壁纸发三态广播（0=AOD, 1=LOCK, 2=HOME）
   python deploy.py state       查看当前壁纸槽位状态
@@ -33,8 +33,7 @@ TMP_DEX = '/data/local/tmp/qihang_aod.dex'
 
 PKG = 'com.qihang.aod'
 SELF_SVC = PKG + '.QihangWallpaper'
-HOME_SVC = PKG + '.QihangHomeWallpaper'
-SCOPES = ['system', 'com.android.systemui', 'miui.systemui.plugin', 'com.miui.aod']
+SCOPES = ['system', 'com.android.systemui', 'miui.systemui.plugin', 'com.miui.aod', 'com.android.thememanager', 'com.qihang.aod']
 
 
 def run(args, check=True, quiet=False):
@@ -52,38 +51,68 @@ def adb(*args, **kw):
 
 
 def shell(cmd, **kw):
-    return run([ADB, 'shell', cmd], **kw)
+    return adb('shell', cmd, **kw)
 
 
 def su(cmd, **kw):
-    return run([ADB, 'shell', 'su', '-c', cmd], **kw)
+    return adb('shell', 'su -c %s' % quote(cmd), **kw)
 
 
-def app_process(cls, *args, **kw):
-    path = apk_path()
-    cp = f'{path}:{TMP_DEX}' if path else TMP_DEX
-    arg_str = ' '.join(f'"{a}"' for a in args)
-    return su(f'CLASSPATH={cp} app_process /system/bin {cls} {arg_str}', **kw)
-
-
-def apk_path():
-    out = shell(f'pm path {PKG}', check=False, quiet=True).strip()
-    for line in out.splitlines():
-        if line.startswith('package:'):
-            return line.split('package:', 1)[1].strip()
-    return ''
+def quote(s):
+    return "'" + s.replace("'", "'\\''") + "'"
 
 
 def push_dex():
-    if os.path.isfile(DEX):
-        adb('push', DEX, TMP_DEX, quiet=True)
-        su(f'chmod 644 {TMP_DEX}', quiet=True)
+    adb('push', DEX, TMP_DEX, quiet=True)
+    su('chmod 644 %s' % TMP_DEX, quiet=True)
+    font_src = os.path.join(ROOT, 'module', 'assets', 'fonts', 'FlymeNumber-VF.ttf')
+    if os.path.exists(font_src):
+        adb('push', font_src, '/data/local/tmp/FlymeNumber-VF.ttf', quiet=True)
+        su('chmod 666 /data/local/tmp/FlymeNumber-VF.ttf', quiet=True)
+
+
+def sync_de_storage():
+    print('>> 同步 Device Protected 存储 (保证开机 Direct Boot 可用)...')
+    su('mkdir -p /data/user_de/0/com.qihang.aod/files /data/user_de/0/com.qihang.aod/shared_prefs', quiet=True)
+    su('cp -rf /sdcard/Android/data/com.qihang.aod/files/* /data/user_de/0/com.qihang.aod/files/ 2>/dev/null || true', quiet=True)
+    su('cp -rf /data/user/0/com.qihang.aod/shared_prefs/* /data/user_de/0/com.qihang.aod/shared_prefs/ 2>/dev/null || true', quiet=True)
+    su('chown -R $(stat -c %u:%g /data/user_de/0/com.qihang.aod) /data/user_de/0/com.qihang.aod', quiet=True)
+    su('chmod -R 775 /data/user_de/0/com.qihang.aod', quiet=True)
+    su('chcon -R $(stat -c %C /data/user_de/0/com.qihang.aod) /data/user_de/0/com.qihang.aod 2>/dev/null || true', quiet=True)
+
+
+def app_process(main_class, *args):
+    cmd = 'CLASSPATH=%s app_process /system/bin %s %s' % (TMP_DEX, main_class, ' '.join(args))
+    return su(cmd)
+
+
+def apk_path():
+    out = shell('pm path %s' % PKG)
+    for line in out.splitlines():
+        if line.startswith('package:'):
+            return line.split(':', 1)[1].strip()
+    raise SystemExit('未安装 %s' % PKG)
 
 
 def cmd_build():
-    r = subprocess.run([sys.executable, os.path.join(ROOT, 'build.py')], cwd=ROOT)
-    if r.returncode != 0:
-        raise SystemExit(r.returncode)
+    print('>> 执行项目构建...')
+    run([sys.executable, os.path.join(ROOT, 'build.py')])
+
+
+def db_state():
+    out = app_process('com.qihang.aod.root.LspDb', '-get', PKG)
+    state = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if ' path=' not in line:
+            continue
+        path = line.split(' path=', 1)[1].split(' enabled=')[0].strip()
+        try:
+            enabled = int(line.split(' enabled=', 1)[1].split(' scope=')[0].strip())
+        except Exception:
+            enabled = -1
+        state[PKG] = (path, enabled)
+    return state
 
 
 def cmd_install(verify='1'):
@@ -96,9 +125,14 @@ def cmd_install(verify='1'):
 
     print('>> 注册 LSPosed 作用域...')
     app_process('com.qihang.aod.root.LspDb', path, PKG, *SCOPES)
+    sync_de_storage()
 
+    lspd_script = os.path.join(ROOT, 'tools', 'lspd_start.sh')
+    if os.path.exists(lspd_script):
+        adb('push', lspd_script, '/data/local/tmp/lspd_start.sh', quiet=True)
+    
     print('>> 重启 zygote 与 lspd 生效 hook...')
-    su('pkill -9 -f lspd || true', quiet=True)
+    su('sh /data/local/tmp/lspd_start.sh --restart', quiet=True)
     su('setprop ctl.restart zygote')
 
     print('>> 等待系统就绪...')
@@ -113,86 +147,115 @@ def cmd_install(verify='1'):
     time.sleep(3)
 
     if str(verify) not in ('0', 'no', 'false'):
-        time.sleep(2)
-        cmd_verify()
-
-
-def cmd_verify():
-    out = app_process('com.qihang.aod.root.LspDb', 'query', PKG, check=False, quiet=True).strip()
-    print('>> LSPosed 作用域校验:', out)
-
-
-def cmd_ui():
-    shell(f'am start -n {PKG}/.MainActivity')
+        got = db_state().get(PKG)
+        ok = bool(got) and got[0] == path and bool(got[1])
+        print('>> LSPosed 作用域校验: %s -> %s' % (got, 'OK' if ok else '需重试'))
 
 
 def cmd_setwall():
-    print('>> 正在通过 root.SetWall 绑定双槽位壁纸...')
-    app_process('com.qihang.aod.root.SetWall', PKG, HOME_SVC, SELF_SVC, 'dual')
-    print('>> 壁纸绑定完成！')
+    push_dex()
+    print('\n>> 设置单槽位统一壁纸（which 3 = 桌面 + 锁屏一体化无缝衔接，根除双槽切换黑闪）...')
+    time.sleep(1)
+    res = app_process('com.qihang.aod.root.SetWall', PKG, SELF_SVC, '3')
+    print('>> SetWall 返回:', res.strip())
+    su('dumpsys deviceidle whitelist +%s' % PKG, quiet=True)
+    cmd_state()
 
 
 def cmd_mode(m):
-    shell(f'am broadcast -a com.qihang.aod.ACTION_WALLPAPER_MODE --ei mode {m} -f 0x01000000')
+    print('>> 广播发送三态指令 mode=%s...' % m)
+    shell('am broadcast -a com.qihang.aod.CMD -p %s --ei mode %s --ez animate true -f 0x10000000' % (PKG, m))
 
 
 def cmd_state():
-    shell('dumpsys wallpaper | grep -iE "mWallpaperComponent|mWidth|mHeight"')
+    print('\n>> 当前壁纸状态:')
+    out = su("dumpsys wallpaper | grep -E 'mWallpaperComponent|mWhich|mSystemWasBoth|System|Lock' | head -20")
+    print(out.strip())
+
+
+def cmd_unlock():
+    print('>> 执行屏幕自动解锁...')
+    pin_file = os.path.join(ROOT, 'tools', 'pin.txt')
+    pin = ''
+    if os.path.exists(pin_file):
+        with open(pin_file, 'r', encoding='utf-8') as f:
+            pin = f.read().strip()
+    cmd = [sys.executable, os.path.join(ROOT, 'tools', 'autounlock.py'), '--always', '--once']
+    if pin:
+        cmd.extend(['--pin', pin])
+    run(cmd)
+
+
+def cmd_ui():
+    print('>> 启动设置界面...')
+    shell('am start -n %s/.MainActivity' % PKG)
 
 
 def cmd_shot(name):
     os.makedirs(SHOTS, exist_ok=True)
-    out = os.path.join(SHOTS, f'{name}.png')
-    shell('screencap -p /sdcard/s.png')
-    adb('pull', '/sdcard/s.png', out, quiet=True)
-    shell('rm /sdcard/s.png', quiet=True)
-    print(f'>> 截图保存到: {out}')
+    remote = '/sdcard/%s.png' % name
+    disp = ''
+    try:
+        out = su('dumpsys SurfaceFlinger --display-id', quiet=True)
+        m = re.search(r'Display (\d+).*?HWC display 0', out)
+        if m:
+            disp = '-d ' + m.group(1) + ' '
+    except Exception as e:
+        pass
+    su('screencap %s-p %s' % (disp, remote), quiet=True)
+    su('chmod 666 %s' % remote, quiet=True)
+    dst = os.path.join(SHOTS, '%s.png' % name)
+    adb('pull', remote, dst, quiet=True)
+    su('rm -f %s' % remote, quiet=True)
+    print('已保存截屏:', dst)
 
 
-def cmd_log(grep=None):
-    filt = f'| grep -iE "{grep}"' if grep else ''
-    os.system(f'"{ADB}" logcat -v time -s QihangAod:V QihangWall:V QihangHome:V QihangLSP:V {filt}')
+def cmd_log(filter_word=''):
+    print('>> 开始抓取日志 (Ctrl+C 退出)...')
+    try:
+        p = subprocess.Popen([ADB, 'logcat', '-v', 'threadtime', '-s', 'QihangAod:V', 'QihangWallpaper:V', 'LensRenderer:V', 'Motion:V', '*:S'],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+        for line in p.stdout:
+            if not filter_word or filter_word in line:
+                print(line, end='', flush=True)
+    except KeyboardInterrupt:
+        pass
 
 
-def cmd_unlock():
-    shell('input keyevent 224')
-    time.sleep(0.3)
-    shell('input keyevent 82')
+def cmd_all():
+    cmd_install()
+    cmd_setwall()
+    cmd_unlock()
+    cmd_state()
 
 
 def main():
-    args = sys.argv[1:]
-    if not args:
+    if len(sys.argv) < 2:
         print(__doc__)
         return
-    cmd = args[0]
-    if cmd == 'build':
+    arg = sys.argv[1]
+    if arg == 'build':
         cmd_build()
-    elif cmd == 'install':
-        cmd_install(*args[1:])
-    elif cmd == 'verify':
-        cmd_verify()
-    elif cmd == 'ui':
-        cmd_ui()
-    elif cmd == 'setwall':
-        cmd_setwall()
-    elif cmd == 'mode':
-        cmd_mode(args[1] if len(args) > 1 else '1')
-    elif cmd == 'state':
-        cmd_state()
-    elif cmd == 'unlock':
-        cmd_unlock()
-    elif cmd == 'shot':
-        cmd_shot(args[1] if len(args) > 1 else 'shot')
-    elif cmd == 'log':
-        cmd_log(args[1] if len(args) > 1 else None)
-    elif cmd == 'all':
+    elif arg == 'install':
         cmd_install()
+    elif arg == 'setwall':
         cmd_setwall()
+    elif arg == 'unlock':
         cmd_unlock()
+    elif arg == 'mode':
+        cmd_mode(sys.argv[2] if len(sys.argv) > 2 else '1')
+    elif arg == 'state':
         cmd_state()
+    elif arg == 'ui':
+        cmd_ui()
+    elif arg == 'shot':
+        cmd_shot(sys.argv[2] if len(sys.argv) > 2 else 'screen')
+    elif arg == 'log':
+        cmd_log(sys.argv[2] if len(sys.argv) > 2 else '')
+    elif arg == 'all':
+        cmd_all()
     else:
-        print('未知命令:', cmd)
+        print('未知命令:', arg)
         print(__doc__)
 
 

@@ -14,15 +14,16 @@ captures/
 .externalNativeBuild
 .cxx
 
-# Keystores & Signing Keys (Strict Security Rule)
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Keystores & Signing Keys
 *.keystore
 *.jks
 *.p12
 *.pem
 *.key
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.log

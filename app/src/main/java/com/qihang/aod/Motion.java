@@ -68,6 +68,15 @@ final class Motion {
     static final float LIUGUANG_AOD_Y = AOD_Y;
     static final float LIUGUANG_END_MICROS = 483667f;
 
+    // ---- 魅族「星月」(moon, style=2) 独立 8 通道轨道参数（对齐 OpenAlive PhotoStyle.get(2)）----
+    static final float MOON_ROTATION = 0f;
+    static final float MOON_SCALE = 0.986f;
+    static final float MOON_EXPANDED_SCALE = 2.35f;
+    static final float MOON_CONTENT_SCALE = 2.34f;
+    static final float MOON_AOD_BLUR = 22f;
+    static final float MOON_AOD_Y = AOD_Y;
+    static final float MOON_END_MICROS = 516667f;
+
     /** cubic-bezier 曲线（Android PathInterpolator 语义）。 */
     static final class Curve {
         static final Curve DEFAULT = new Curve(-1, 0, 0, 0);
@@ -85,6 +94,14 @@ final class Motion {
         static final Curve DECOR_IN = new Curve(.37f, .02f, .04f, 1f);
         /** 留光专用几何缩放/位移/回缩曲线 path(0.28, 0, 0.33, 1)。 */
         static final Curve LIUGUANG = new Curve(.28f, 0f, .33f, 1f);
+        /** 星月专用位移曲线 path(0.32, 0.01, 0.1, 1)。 */
+        static final Curve MOON_POS = new Curve(.32f, .01f, .1f, 1f);
+        /** 星月专用展开缩放曲线 path(0.32, 0.03, 0.1, 0.99)。 */
+        static final Curve MOON_SCALE_OPEN = new Curve(.32f, .03f, .1f, .99f);
+        /** 星月专用回缩缩放曲线 path(0.32, -0.04, 0.1, 1.01)。 */
+        static final Curve MOON_SCALE_CLOSE = new Curve(.32f, -.04f, .1f, 1.01f);
+        /** 星月专用展开模糊/内容曲线 path(0.37, 0.01, 0.34, 1)。 */
+        static final Curve MOON_CONTENT_OPEN = new Curve(.37f, .01f, .34f, 1f);
 
         private final float x1;
         private final float y1;
@@ -163,6 +180,17 @@ final class Motion {
     final float expandedScale;
 
     int mode = LOCK;
+    int aodStyle = AodStyleSettings.STYLE_SET_SAIL;
+
+    void setAodStyle(int style) {
+        if (this.aodStyle != style) {
+            this.aodStyle = style;
+            if (!animating) {
+                float[] fs = frameStateOf(mode);
+                System.arraycopy(fs, 0, frameValues, 0, FN);
+            }
+        }
+    }
     /** 「息屏动画持续播放」（sail_continuous_aod），官方默认 true。 */
     boolean continuousAod = true;
     /** ratio[息屏, 锁屏, 桌面]，仅用于日志/调试（本实现单 pass，不做三 target 加权）。 */
@@ -170,7 +198,7 @@ final class Motion {
 
     private long startNanos;
     private long lastFrameNanos;
-    private boolean animating;
+    private volatile boolean animating;
     private long aodEnterNanos;
     /** 进入当前模式的时间与"上一个模式"，用于并掉指纹解锁时一闪而过的锁屏态。 */
     private long modeEnterNanos;
@@ -255,6 +283,10 @@ final class Motion {
         return frameValues[F_CONTENT];
     }
 
+    float frameBlur() {
+        return frameValues[F_BLUR];
+    }
+
     float frameX() {
         return frameValues[F_X];
     }
@@ -297,8 +329,15 @@ final class Motion {
         return new float[]{blur, expandedScale, 0f, 0f, -149f, 0f, 0f, 0f, 1.24f, -360f};
     }
 
-    /** 留光（leave_light）三态 8 通道初值（对齐 OpenAlive FrameMotion.state）。 */
+    /** 留光（leave_light）与星月（moon）三态 8 通道初值（对齐 OpenAlive PhotoStyle）。 */
     private float[] frameStateOf(int scene) {
+        if (aodStyle == AodStyleSettings.STYLE_MOON) {
+            if (scene == AOD) {
+                return new float[]{MOON_AOD_BLUR, MOON_ROTATION, MOON_SCALE, MOON_CONTENT_SCALE, 0f, MOON_AOD_Y, 0f, 1f};
+            }
+            float fullScale = Math.max(MOON_EXPANDED_SCALE, aspect + 0.05f);
+            return new float[]{0f, 0f, fullScale, aspect / fullScale, 0f, 0f, MOON_END_MICROS, scene == LOCK ? 1f : 0f};
+        }
         if (scene == AOD) {
             return new float[]{0f, LIUGUANG_ROTATION, LIUGUANG_SCALE, 1f, 0f, LIUGUANG_AOD_Y, 0f, 1f};
         }
@@ -350,6 +389,7 @@ final class Motion {
         }
         System.arraycopy(src.ratio, 0, this.ratio, 0, 3);
         this.mode = src.mode;
+        this.aodStyle = src.aodStyle;
         this.animating = src.animating;
         this.lastTransition = src.lastTransition;
         this.startNanos = src.startNanos;
@@ -423,16 +463,30 @@ final class Motion {
      * 解锁要接手锁屏侧已经播了一半的扩散时，先用它把值对齐到同一时刻，
      * 再 {@link #continueTo} 续跑，切换瞬间才不跳变。
      */
-    void seekTransition(int from, int to, long elapsedMs, long nowNanos) {
-        int tr = transition(from, to);
-        buildTracks(from, to, tr, false);
+    void seekTransition(int fromMode, int toMode, long elapsedMs, long nowNanos) {
+        int tr = transition(fromMode, toMode);
+        buildTracks(fromMode, toMode, tr, false);
+        // ★ 核心修复：对齐初始状态为 from 的初始稳态值，消除使用当前残留 values[i] 导致的二次叠加/突变跳满
+        float[] startState = stateOf(fromMode);
+        for (int i = 0; i < N; i++) {
+            // AOD uses NaN for PHOTO_ANGLE to mean "keep the current angle".
+            // buildTracks already resolved its nearest finite rotation; copying
+            // the sentinel here would poison seek/continue and the photo matrix.
+            if (!Float.isNaN(startState[i])) {
+                this.from[i] = startState[i];
+            }
+        }
+        float[] startFrameState = frameStateOf(fromMode);
+        for (int i = 0; i < FN; i++) {
+            frameFrom[i] = startFrameState[i];
+        }
         startNanos = nowNanos - Math.max(0, elapsedMs) * 1_000_000L;   // 回拨：使"现在"正好是 elapsedMs
-        modeBefore = from;
-        mode = to;
+        modeBefore = fromMode;
+        mode = toMode;
         modeEnterNanos = nowNanos;
         animating = true;
         lastTransition = tr;
-        ratiosTo(to, nowNanos, 1);
+        ratiosTo(toMode, nowNanos, 1);
         catchUpChannels(nowNanos);
     }
 
@@ -444,6 +498,25 @@ final class Motion {
     void continueTo(int next, long nowNanos) {
         if (!animating) {
             setMode(next, true, nowNanos);
+            return;
+        }
+        if (mode == LOCK && next == HOME) {
+            // ★ 锁屏扩散（tr0）的目标几何态与桌面（HOME）完全同构（大圆全屏展开、无模糊、无扭曲）。
+            // 扩散正在平滑推进中（120Hz 实时渲染），绝不可打断原有轨迹重新建轨或回拨时间！
+            // 保持原有 startNanos、from/to 轨线与曲线自然播完，仅更新模式与混合权重。
+            modeBefore = mode;
+            mode = next;
+            modeEnterNanos = nowNanos;
+            long rem = remainingMs(nowNanos);
+            ratiosTo(next, nowNanos, Math.max(100, rem));
+            if (aodStyle == AodStyleSettings.STYLE_MOON) {
+                // 星月样式在 HOME 态光晕 alpha 归零
+                frameFrom[F_ALPHA] = frameValues[F_ALPHA];
+                frameTo[F_ALPHA] = 0f;
+                frameDurMs[F_ALPHA] = Math.max(100, rem);
+                frameDelayMs[F_ALPHA] = 0;
+            }
+            android.util.Log.i("QihangAod", "平滑接力 LOCK→HOME: 保持原有扩散轨迹自然播完，剩余=" + rem + "ms");
             return;
         }
         catchUpChannels(nowNanos);
@@ -636,7 +709,7 @@ final class Motion {
                 durMs[SPEED] = 0;
                 break;
         }
-        long delay = (prev == AOD && !interrupted) ? 150 : 0; // 退出熄屏的整体起始延迟
+        long delay = (prev == AOD && !interrupted && tr != 2) ? 150 : 0; // 退出熄屏的整体起始延迟（tr=2 指纹直达桌面零延迟，立即爆发）
         for (int i = 0; i < N; i++) {
             delayMs[i] += delay;
         }
@@ -646,7 +719,7 @@ final class Motion {
         startNanos = System.nanoTime();
     }
 
-    /** 装载魅族「留光」(leave_light) 8 通道轨道（对齐 OpenAlive PhotoStyle.get(1) 与 FrameMotion.prepare）。 */
+    /** 装载魅族「留光」(style=1) 与「星月」(style=2) 8 通道独立动画轨道（严格对齐 OpenAlive PhotoStyle）。 */
     private void buildFrameTracks(int prev, int next, int tr, boolean interrupted, long wakeDelay) {
         float[] target = frameStateOf(next);
         for (int i = 0; i < FN; i++) {
@@ -663,43 +736,109 @@ final class Motion {
                 frameFrom[i] = aodInit[i];
             }
         }
-        if (tr == 0 || tr == 2) {
-            // 退出熄屏（展开）：rotation 167ms EASE；scale/x/y 517ms + 50ms 延迟 + LIUGUANG(0.28,0,0.33,1)
-            frameDurMs[F_ROTATION] = 167;
-            frameDelayMs[F_ROTATION] = 0;
-            frameCurves[F_ROTATION] = Curve.EASE;
+        if (aodStyle == AodStyleSettings.STYLE_MOON) {
+            // ---- 魅族官方星月 (moon) 动画曲线与时长（对齐 OpenAlive PhotoStyle.get(2)）----
+            boolean open = (tr == 0 || tr == 2);
+            if (open) {
+                // x, y: 367ms, delay 0, MOON_POS(0.32, 0.01, 0.1, 1)
+                frameDurMs[F_X] = 367;
+                frameDelayMs[F_X] = 0;
+                frameCurves[F_X] = Curve.MOON_POS;
 
-            frameDurMs[F_SCALE] = 517;
-            frameDelayMs[F_SCALE] = 50;
-            frameCurves[F_SCALE] = Curve.LIUGUANG;
+                frameDurMs[F_Y] = 367;
+                frameDelayMs[F_Y] = 0;
+                frameCurves[F_Y] = Curve.MOON_POS;
 
-            frameDurMs[F_X] = 517;
-            frameDelayMs[F_X] = 50;
-            frameCurves[F_X] = Curve.LIUGUANG;
+                // scale: 367ms, delay 0, MOON_SCALE_OPEN(0.32, 0.03, 0.1, 0.99)
+                frameDurMs[F_SCALE] = 367;
+                frameDelayMs[F_SCALE] = 0;
+                frameCurves[F_SCALE] = Curve.MOON_SCALE_OPEN;
 
-            frameDurMs[F_Y] = 517;
-            frameDelayMs[F_Y] = 50;
-            frameCurves[F_Y] = Curve.LIUGUANG;
-        } else if (tr == 1 || tr == 3) {
-            // 进入熄屏（回缩）：rotation/scale/x/y 统一 450ms + LIUGUANG(0.28,0,0.33,1)
-            frameDurMs[F_ROTATION] = 450;
-            frameDelayMs[F_ROTATION] = 0;
-            frameCurves[F_ROTATION] = Curve.LIUGUANG;
+                // blur, content: tr==0 ? 533 : 553, delay 0, MOON_CONTENT_OPEN(0.37, 0.01, 0.34, 1)
+                long cDur = (tr == 0) ? 533 : 553;
+                frameDurMs[F_BLUR] = cDur;
+                frameDelayMs[F_BLUR] = 0;
+                frameCurves[F_BLUR] = Curve.MOON_CONTENT_OPEN;
 
-            frameDurMs[F_SCALE] = 450;
-            frameDelayMs[F_SCALE] = 0;
-            frameCurves[F_SCALE] = Curve.LIUGUANG;
+                frameDurMs[F_CONTENT] = cDur;
+                frameDelayMs[F_CONTENT] = 0;
+                frameCurves[F_CONTENT] = Curve.MOON_CONTENT_OPEN;
 
-            frameDurMs[F_X] = 450;
-            frameDelayMs[F_X] = 0;
-            frameCurves[F_X] = Curve.LIUGUANG;
+                frameDurMs[F_ROTATION] = 0;
+                frameDelayMs[F_ROTATION] = 0;
+                frameCurves[F_ROTATION] = Curve.LINEAR;
+            } else if (tr == 1 || tr == 3) {
+                // 回缩入息屏:
+                // x, y: 467ms, delay 176ms, MOON_POS
+                frameDurMs[F_X] = 467;
+                frameDelayMs[F_X] = 176;
+                frameCurves[F_X] = Curve.MOON_POS;
 
-            frameDurMs[F_Y] = 450;
-            frameDelayMs[F_Y] = 0;
-            frameCurves[F_Y] = Curve.LIUGUANG;
-        } else if (tr == 4) {
-            frameDurMs[F_ALPHA] = 800;
-            frameCurves[F_ALPHA] = Curve.EASE;
+                frameDurMs[F_Y] = 467;
+                frameDelayMs[F_Y] = 176;
+                frameCurves[F_Y] = Curve.MOON_POS;
+
+                // scale: 567ms, delay 176ms, MOON_SCALE_CLOSE(0.32, -0.04, 0.1, 1.01)
+                frameDurMs[F_SCALE] = 567;
+                frameDelayMs[F_SCALE] = 176;
+                frameCurves[F_SCALE] = Curve.MOON_SCALE_CLOSE;
+
+                // blur, content: 600ms, delay 0, Curve.EASE
+                frameDurMs[F_BLUR] = 600;
+                frameDelayMs[F_BLUR] = 0;
+                frameCurves[F_BLUR] = Curve.EASE;
+
+                frameDurMs[F_CONTENT] = 600;
+                frameDelayMs[F_CONTENT] = 0;
+                frameCurves[F_CONTENT] = Curve.EASE;
+
+                frameDurMs[F_ROTATION] = 0;
+                frameDelayMs[F_ROTATION] = 0;
+                frameCurves[F_ROTATION] = Curve.LINEAR;
+            } else if (tr == 4) {
+                frameDurMs[F_ALPHA] = 800;
+                frameCurves[F_ALPHA] = Curve.EASE;
+            }
+        } else {
+            // ---- 留光 (leave_light) 动画曲线与时长（对齐 OpenAlive PhotoStyle.get(1)）----
+            if (tr == 0 || tr == 2) {
+                // 退出熄屏（展开）：rotation 167ms EASE；scale/x/y 517ms + 50ms 延迟 + LIUGUANG(0.28,0,0.33,1)
+                frameDurMs[F_ROTATION] = 167;
+                frameDelayMs[F_ROTATION] = 0;
+                frameCurves[F_ROTATION] = Curve.EASE;
+
+                frameDurMs[F_SCALE] = 517;
+                frameDelayMs[F_SCALE] = 50;
+                frameCurves[F_SCALE] = Curve.LIUGUANG;
+
+                frameDurMs[F_X] = 517;
+                frameDelayMs[F_X] = 50;
+                frameCurves[F_X] = Curve.LIUGUANG;
+
+                frameDurMs[F_Y] = 517;
+                frameDelayMs[F_Y] = 50;
+                frameCurves[F_Y] = Curve.LIUGUANG;
+            } else if (tr == 1 || tr == 3) {
+                // 进入熄屏（回缩）：rotation/scale/x/y 统一 450ms + LIUGUANG(0.28,0,0.33,1)
+                frameDurMs[F_ROTATION] = 450;
+                frameDelayMs[F_ROTATION] = 0;
+                frameCurves[F_ROTATION] = Curve.LIUGUANG;
+
+                frameDurMs[F_SCALE] = 450;
+                frameDelayMs[F_SCALE] = 0;
+                frameCurves[F_SCALE] = Curve.LIUGUANG;
+
+                frameDurMs[F_X] = 450;
+                frameDelayMs[F_X] = 0;
+                frameCurves[F_X] = Curve.LIUGUANG;
+
+                frameDurMs[F_Y] = 450;
+                frameDelayMs[F_Y] = 0;
+                frameCurves[F_Y] = Curve.LIUGUANG;
+            } else if (tr == 4) {
+                frameDurMs[F_ALPHA] = 800;
+                frameCurves[F_ALPHA] = Curve.EASE;
+            }
         }
         frameDurMs[F_MICROS] = Math.round(Math.abs(frameFrom[F_MICROS] - frameTo[F_MICROS]) / 1000f);
         frameDelayMs[F_MICROS] = 0;
@@ -779,7 +918,7 @@ final class Motion {
             values[X] = 0f;
             values[Y] = AOD_Y;
             frameValues[F_X] = 0f;
-            frameValues[F_Y] = LIUGUANG_AOD_Y;
+            frameValues[F_Y] = (aodStyle == AodStyleSettings.STYLE_MOON) ? MOON_AOD_Y : LIUGUANG_AOD_Y;
         }
 
         updateRatio(nowNanos);
@@ -789,7 +928,9 @@ final class Motion {
 
     private void updateRatio(long nowNanos) {
         // 官方 blendDuration()（aod==0、lock 默认 2、home 默认 6）：
-        //   tr0 = max(950, 850) = 950；tr2 = 300；tr1 = 650；tr3 = 650
+        //   启航: tr0 = max(950, 850) = 950；tr2 = 650；tr1 = 650；tr3 = 650
+        //   星月: tr0 = 533, tr1 = 743, tr2 = 553, tr3 = 743, tr4 = 800, tr5 = 400
+        //   留光: tr0 = 567, tr1 = 530, tr2 = 567, tr3 = 530, tr4 = 800, tr5 = 400
         if (!animating) {
             ratio[0] = mode == AOD ? 1f : 0f;
             ratio[1] = mode == LOCK ? 1f : 0f;
@@ -814,43 +955,123 @@ final class Motion {
         Curve c;
         int target;
         int src;
-        switch ((int) tr) {
-            case 0:
-                dur = 950;
-                c = Curve.LINEAR;
-                src = AOD;
-                target = LOCK;
-                break;
-            case 2:
-                dur = 650;
-                c = Curve.EASE;
-                src = AOD;
-                target = HOME;
-                break;
-            case 1:
-                dur = 650;
-                c = Curve.LINEAR;
-                src = LOCK;
-                target = AOD;
-                break;
-            case 3:
-                dur = 650;
-                c = Curve.EASE;
-                src = HOME;
-                target = AOD;
-                break;
-            case 4:
-                dur = 500;
-                c = Curve.LINEAR;
-                src = LOCK;
-                target = HOME;
-                break;
-            default:
-                dur = 500;
-                c = Curve.LINEAR;
-                src = HOME;
-                target = LOCK;
-                break;
+        if (aodStyle == AodStyleSettings.STYLE_MOON) {
+            switch ((int) tr) {
+                case 0:
+                    dur = 533;
+                    c = Curve.LINEAR;
+                    src = AOD;
+                    target = LOCK;
+                    break;
+                case 2:
+                    dur = 553;
+                    c = Curve.EASE;
+                    src = AOD;
+                    target = HOME;
+                    break;
+                case 1:
+                    dur = 743;
+                    c = Curve.LINEAR;
+                    src = LOCK;
+                    target = AOD;
+                    break;
+                case 3:
+                    dur = 743;
+                    c = Curve.EASE;
+                    src = HOME;
+                    target = AOD;
+                    break;
+                case 4:
+                    dur = 800;
+                    c = Curve.LINEAR;
+                    src = LOCK;
+                    target = HOME;
+                    break;
+                default:
+                    dur = 400;
+                    c = Curve.LINEAR;
+                    src = HOME;
+                    target = LOCK;
+                    break;
+            }
+        } else if (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT) {
+            switch ((int) tr) {
+                case 0:
+                    dur = 567;
+                    c = Curve.LINEAR;
+                    src = AOD;
+                    target = LOCK;
+                    break;
+                case 2:
+                    dur = 567;
+                    c = Curve.EASE;
+                    src = AOD;
+                    target = HOME;
+                    break;
+                case 1:
+                    dur = 530;
+                    c = Curve.LINEAR;
+                    src = LOCK;
+                    target = AOD;
+                    break;
+                case 3:
+                    dur = 530;
+                    c = Curve.EASE;
+                    src = HOME;
+                    target = AOD;
+                    break;
+                case 4:
+                    dur = 800;
+                    c = Curve.LINEAR;
+                    src = LOCK;
+                    target = HOME;
+                    break;
+                default:
+                    dur = 400;
+                    c = Curve.LINEAR;
+                    src = HOME;
+                    target = LOCK;
+                    break;
+            }
+        } else {
+            switch ((int) tr) {
+                case 0:
+                    dur = 950;
+                    c = Curve.LINEAR;
+                    src = AOD;
+                    target = LOCK;
+                    break;
+                case 2:
+                    dur = 650;
+                    c = Curve.EASE;
+                    src = AOD;
+                    target = HOME;
+                    break;
+                case 1:
+                    dur = 650;
+                    c = Curve.LINEAR;
+                    src = LOCK;
+                    target = AOD;
+                    break;
+                case 3:
+                    dur = 650;
+                    c = Curve.EASE;
+                    src = HOME;
+                    target = AOD;
+                    break;
+                case 4:
+                    dur = 500;
+                    c = Curve.LINEAR;
+                    src = LOCK;
+                    target = HOME;
+                    break;
+                default:
+                    dur = 500;
+                    c = Curve.LINEAR;
+                    src = HOME;
+                    target = LOCK;
+                    break;
+            }
         }
         float p = Math.min(1f, Math.max(0f,
                 (nowNanos - startNanos - ratioDelayMs * 1_000_000L) / (dur * 1_000_000f)));
