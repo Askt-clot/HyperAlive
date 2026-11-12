@@ -10,7 +10,7 @@
 1. **息屏视觉风格**：
    - **启航**：魅族经典圆形透镜，中心相框自转，全屏大圆爆发扩散铺满屏幕。
    - **留光**：45° 倾角流光拍立得双层相框遮罩，优雅绽放转场。
-   - **星月**：
+   - **星月**：魅族经典弯月星芒遮罩，32 帧离散掩码序列与高斯微朦胧渐开绽放铺满全屏。
 2. **自定义壁纸跟随与取景框**：
    - 支持相册任意照片跟随息屏与锁屏。
    - 内置图片取景器，支持精准双指缩放、旋转、移动与一键复位居中。
@@ -47,14 +47,18 @@ D:\HyperAlive
 ├── app/                                # 核心模块工程
 │   └── src/main/
 │       ├── java/com/qihang/aod/        # Java 源码（GLES 渲染、时钟、UI、LSPosed Hook）
-│       │   ├── LensRenderer.java       # GLES 3.0 启航透镜与留光相框渲染器
+│       │   ├── LensRenderer.java       # GLES 3.0 启航透镜与留光/星月相框渲染器
 │       │   ├── FlymeClockView.java     # 魅族风格自绘时钟
 │       │   ├── PhotoCropActivity.java  # 取景框裁剪与缩放
 │       │   ├── QihangWallpaper.java    # 单槽位一体化 WallpaperService
-│       │   └── XposedInit.java         # LSPosed 系统 Hook 入口
-│       ├── res/                        # 资源文件（图标、布局、文本）
-│       └── assets/                     # 着色器(GLSL)、遮罩素材与配置
+│       │   ├── LspState.java           # LSPosed 激活状态三态判定与锁屏安全管理
+│       │   ├── XposedInit.java         # LSPosed 系统 Hook 入口（门面分发）
+│       │   ├── hook/                   # ★ 全新模块化 Hook 核心层（PMS/SysUI/AOD/时钟与预览协同）
+│       │   └── root/                   # 独立进程工具（app_process 直连设壁纸与 LspDb）
+│       ├── res/                        # 资源文件（图标、布局、文本、作用域配置）
+│       └── assets/                     # 着色器(GLSL)、遮罩素材(启航/留光/星月)与配置
 ├── stub/                               # Xposed API 离线编译桩（免外网依赖）
+├── tools/                              # 自动化调试、动效回归与时钟时序测试工具链
 ├── build.py                            # 免 Gradle 本地高速构建脚本（~3秒生成 APK）
 ├── deploy.py                           # ADB 快速安装、激活作用域与单槽绑定工具
 ```
