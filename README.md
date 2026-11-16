@@ -1,6 +1,6 @@
 # HyperAlive / 魅族息屏 (com.qihang.aod) —— LSPosed 模块
 
-> 在小米澎湃 OS（Xiaomi HyperOS / Android 14+ / 17）上复刻魅族 Alive 壁纸「息屏 AOD ➔ 锁屏 ➔ 桌面」三态无缝连贯动画。  
+> 在小米澎湃 OS4（Xiaomi HyperOS / Android 14+ / 17）上复刻魅族 Alive 壁纸「息屏 AOD ➔ 锁屏 ➔ 桌面」三态无缝连贯动画。  
 > 采用 **LSPosed 模块 + 自建 WallpaperService (GLES 3.0)** 实现。
 
 ---
