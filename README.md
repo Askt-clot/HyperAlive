@@ -53,14 +53,14 @@ D:\HyperAlive
 │       │   ├── PhotoCropActivity.java  # 取景框裁剪与缩放
 │       │   ├── QihangWallpaper.java    # 单槽位一体化 WallpaperService
 │       │   ├── LspState.java           # LSPosed 激活状态三态判定与锁屏安全管理
-│       │   ├── XposedInit.java         # LSPosed 系统 Hook 入口（门面分发）
-│       │   ├── hook/                   # ★ 全新模块化 Hook 核心层（PMS/SysUI/AOD/时钟与预览协同）
+│       │   ├── XposedInit.java         # LSPosed 系统 Hook 入口
+│       │   ├── hook/                   # 模块化 Hook 核心层（PMS/SysUI/AOD/时钟与预览协同）
 │       │   └── root/                   # 独立进程工具（app_process 直连设壁纸与 LspDb）
 │       ├── res/                        # 资源文件（图标、布局、文本、作用域配置）
 │       └── assets/                     # 着色器(GLSL)、遮罩素材(启航/留光/星月)与配置
-├── stub/                               # Xposed API 离线编译桩（免外网依赖）
+├── stub/                               # Xposed API 离线编译桩
 ├── tools/                              # 自动化调试、动效回归与时钟时序测试工具链
-├── build.py                            # 免 Gradle 本地高速构建脚本（~3秒生成 APK）
+├── build.py                            # 本地构建脚本
 ├── deploy.py                           # ADB 快速安装、激活作用域与单槽绑定工具
 ```
 
