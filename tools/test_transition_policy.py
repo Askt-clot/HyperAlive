@@ -5,16 +5,30 @@ The scenarios reproduce wake/doze ordering and separate wallpaper engines;
 the harness compiles the real policy rather than reimplementing it in Python.
 """
 from pathlib import Path
+import os
+import shutil
 import subprocess
 import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-JDK = Path(r"D:\Java\jdk-21\bin")
-SOURCE = ROOT / "app/src/main/java/com/qihang/aod/TransitionPolicy.java"
+SOURCE = ROOT / "app/src/main/java/com/hyperalive/aod/TransitionPolicy.java"
+
+
+def _resolve_jdk_tool(name: str) -> str:
+    exe = f"{name}.exe" if os.name == "nt" else name
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        cand = Path(java_home) / "bin" / exe
+        if cand.is_file():
+            return str(cand)
+    found = shutil.which(name)
+    if found:
+        return found
+    raise SystemExit(f"Missing JDK tool '{name}': configure JAVA_HOME or PATH")
 
 HARNESS = r"""
-import com.qihang.aod.TransitionPolicy;
+import com.hyperalive.aod.TransitionPolicy;
 
 public final class TransitionPolicyRegression {
     private static int assertions;
@@ -97,11 +111,11 @@ def main():
         harness = work / "TransitionPolicyRegression.java"
         harness.write_text(HARNESS, encoding="utf-8")
         subprocess.run([
-            str(JDK / "javac.exe"), "-nowarn", "-encoding", "UTF-8", "-source", "8",
+            _resolve_jdk_tool("javac"), "-nowarn", "-encoding", "UTF-8", "-source", "8",
             "-target", "8", "-d", str(work), str(SOURCE), str(harness),
         ], check=True)
         subprocess.run([
-            str(JDK / "java.exe"), "-cp", str(work), "TransitionPolicyRegression",
+            _resolve_jdk_tool("java"), "-cp", str(work), "TransitionPolicyRegression",
         ], check=True)
 
 

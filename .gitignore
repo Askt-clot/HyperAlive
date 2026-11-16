@@ -6,24 +6,32 @@
 .DS_Store
 /build
 */build
+artifacts/
 *.apk
 *.idsig
 *.ap_
 *.dex
 captures/
+debug_runs/
+backups/
+.rewrite-coordination/
 .externalNativeBuild
 .cxx
 
-# Python
+# Python & Local Temp
 __pycache__/
 *.py[cod]
 *$py.class
 *.log
+*.mp4
+*.png
+tmp/
+tools/fixtures/
 
-# Keystores & Signing Keys
+# Keystores & Local Signing Config
 *.keystore
 *.jks
 *.p12
 *.pem
 *.key
-
+signing.properties

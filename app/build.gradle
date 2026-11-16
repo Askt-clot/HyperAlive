@@ -2,26 +2,54 @@ plugins {
     id 'com.android.application'
 }
 
+def resolveSigningParam = { String key ->
+    def prop = findProperty(key)
+    if (prop != null && !prop.toString().trim().isEmpty()) {
+        return prop.toString().trim()
+    }
+    def envVal = System.getenv(key)
+    if (envVal != null && !envVal.trim().isEmpty()) {
+        return envVal.trim()
+    }
+    return null
+}
+
+def stripPassPrefix = { String raw ->
+    if (raw == null) return null
+    return raw.startsWith("pass:") ? raw.substring(5) : raw
+}
+
+def releaseKeystorePath = resolveSigningParam("HYPERALIVE_KEYSTORE")
+def releaseKeyAlias = resolveSigningParam("HYPERALIVE_KS_ALIAS")
+def releaseStorePass = stripPassPrefix(resolveSigningParam("HYPERALIVE_KS_PASS"))
+def releaseKeyPass = stripPassPrefix(resolveSigningParam("HYPERALIVE_KEY_PASS")) ?: releaseStorePass
+def hasReleaseSigning = releaseKeystorePath != null &&
+        releaseKeyAlias != null &&
+        releaseStorePass != null &&
+        file(releaseKeystorePath).isFile()
+
 android {
-    namespace 'com.qihang.aod'
+    namespace 'com.hyperalive.aod'
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.qihang.aod"
+        applicationId "com.hyperalive.aod"
         minSdk 29
         targetSdk 35
-        versionCode 20261111
-        versionName "1.0.3"
+        versionCode 20261116
+        versionName "1.0.4"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    signingConfigs {
-        release {
-            storeFile file("../qihang.keystore")
-            storePassword "android"
-            keyAlias "qihang"
-            keyPassword "android"
+    if (hasReleaseSigning) {
+        signingConfigs {
+            release {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseStorePass
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPass
+            }
         }
     }
 
@@ -29,10 +57,14 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
         debug {
-            signingConfig signingConfigs.release
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 

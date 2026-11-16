@@ -5,12 +5,26 @@ Android Matrix is stubbed only to make the JVM harness possible. No assertion
 uses matrix output, so this is not a graphics or on-device rendering test.
 """
 from pathlib import Path
+import os
+import shutil
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-JDK = Path(r"D:\Java\jdk-21\bin")
-JAVA = ROOT / "app/src/main/java/com/qihang/aod"
+JAVA = ROOT / "app/src/main/java/com/hyperalive/aod"
+
+
+def _resolve_jdk_tool(name: str) -> str:
+    exe = f"{name}.exe" if os.name == "nt" else name
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        cand = Path(java_home) / "bin" / exe
+        if cand.is_file():
+            return str(cand)
+    found = shutil.which(name)
+    if found:
+        return found
+    raise SystemExit(f"Missing JDK tool '{name}': configure JAVA_HOME or PATH")
 
 MATRIX = r"""
 package android.opengl;
@@ -29,7 +43,7 @@ public final class Matrix {
 """
 
 HARNESS = r"""
-package com.qihang.aod;
+package com.hyperalive.aod;
 import java.lang.reflect.Field;
 
 public final class MotionRegression {
@@ -52,6 +66,11 @@ public final class MotionRegression {
         Field f=Motion.class.getDeclaredField("startNanos");
         f.setAccessible(true);
         return f.getLong(m);
+    }
+    private static float[] frameTo(Motion m) throws Exception {
+        Field f=Motion.class.getDeclaredField("frameTo");
+        f.setAccessible(true);
+        return (float[]) f.get(m);
     }
     private static Motion aod(int style) {
         Motion m=new Motion(1200,2608);
@@ -136,6 +155,35 @@ public final class MotionRegression {
         interrupted.advance(reverseStart+1000*MS);
         near(interrupted.scale(),interrupted.expandedScale,"reverse transition reaches HOME");
         finite(interrupted,"interrupted transition");
+
+        long fixedNow=123456789000L;
+        Motion aligned=aod(0);
+        aligned.setMode(Motion.LOCK,true,fixedNow);
+        check(start(aligned)==fixedNow,"setMode startNanos must equal caller nowNanos exactly");
+        aligned.seekTransition(Motion.AOD,Motion.LOCK,250,fixedNow);
+        check(start(aligned)==fixedNow-250*MS,"seekTransition startNanos must align to caller nowNanos - elapsedMs");
+
+        // Bug 3 regression: setAodStyle updates frame targets both while idle and during animation.
+        Motion styleMotion=aod(0);
+        float baselineBlur=styleMotion.frameValues[0];
+        float baselineRot=styleMotion.frameValues[1];
+        styleMotion.setAodStyle(AodStyleSettings.STYLE_LEAVE_LIGHT);
+        check(styleMotion.aodStyle==AodStyleSettings.STYLE_LEAVE_LIGHT,"setAodStyle(LEAVE_LIGHT) updates idle aodStyle");
+        styleMotion.setAodStyle(AodStyleSettings.STYLE_MOON);
+        float moonBlur=styleMotion.frameValues[0];
+        float moonRot=styleMotion.frameValues[1];
+        check(moonBlur!=baselineBlur && moonRot!=baselineRot,"setAodStyle(MOON) updates idle frame blur & rotation immediately");
+        check(frameTo(styleMotion)[0]==moonBlur && frameTo(styleMotion)[1]==moonRot,"setAodStyle(MOON) updates frameTo target");
+
+        long animT=200000000000L;
+        styleMotion.setAodStyle(AodStyleSettings.STYLE_SET_SAIL);
+        styleMotion.applyState(Motion.HOME,animT);
+        styleMotion.setMode(Motion.AOD,true,animT+10*MS);
+        styleMotion.advance(animT+100*MS);
+        check(styleMotion.animating(),"animation to AOD in progress before style switch");
+        styleMotion.setAodStyle(AodStyleSettings.STYLE_MOON);
+        check(styleMotion.frameValues[0]==moonBlur && styleMotion.frameValues[1]==moonRot,"setAodStyle(MOON) updates frame channels during animation");
+        check(frameTo(styleMotion)[0]==moonBlur,"setAodStyle(MOON) updates frameTo during animation");
         System.out.println("Motion regression: "+assertions+" assertions passed");
     }
 }
@@ -150,8 +198,8 @@ def main():
         sources = {
             "android/opengl/Matrix.java": MATRIX,
             "android/util/Log.java": "package android.util; public final class Log {public static int i(String t,String m){return 0;}}",
-            "com/qihang/aod/AodStyleSettings.java": "package com.qihang.aod; final class AodStyleSettings {static final int STYLE_SET_SAIL=0, STYLE_LEAVE_LIGHT=1, STYLE_MOON=2;}",
-            "com/qihang/aod/MotionRegression.java": HARNESS,
+            "com/hyperalive/aod/AodStyleSettings.java": "package com.hyperalive.aod; final class AodStyleSettings {static final int STYLE_SET_SAIL=0, STYLE_LEAVE_LIGHT=1, STYLE_MOON=2;}",
+            "com/hyperalive/aod/MotionRegression.java": HARNESS,
         }
         stub_paths = []
         for relative, text in sources.items():
@@ -160,12 +208,12 @@ def main():
             path.write_text(text, encoding="utf-8")
             stub_paths.append(str(path))
         subprocess.run([
-            str(JDK / "javac.exe"), "-nowarn", "-encoding", "UTF-8", "-source", "8",
+            _resolve_jdk_tool("javac"), "-nowarn", "-encoding", "UTF-8", "-source", "8",
             "-target", "8", "-d", str(work), str(JAVA / "Motion.java"),
             str(JAVA / "LensMatrices.java"), *stub_paths,
         ], check=True)
         subprocess.run([
-            str(JDK / "java.exe"), "-cp", str(work), "com.qihang.aod.MotionRegression",
+            _resolve_jdk_tool("java"), "-cp", str(work), "com.hyperalive.aod.MotionRegression",
         ], check=True)
 
 
