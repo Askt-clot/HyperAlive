@@ -87,3 +87,7 @@ python deploy.py setwall
 - `System UI 插件` (`miui.systemui.plugin`)
 - `息屏与锁屏` (`com.miui.aod`)
 - `主题壁纸` (`com.android.thememanager`)
+
+
+## 五、致谢
+- 下北沢最速傳說 参考项目https://github.com/Maga-King/OpenAlive
