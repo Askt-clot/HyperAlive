@@ -97,7 +97,6 @@ adb install -r build/HyperAlive-v1.0.5.apk
 - `System UI 插件` (`miui.systemui.plugin`)
 - `息屏与锁屏` (`com.miui.aod`)
 - `主题壁纸` (`com.android.thememanager`)
-- HyperAlive 自身 (`io.github.askt_clot.hyperalive`)，用于检测模块启用状态和转发日志。
 
 ---
 
