@@ -1,4 +1,4 @@
-# HyperAlive / 魅族息屏 (com.hyperalive.aod) —— LSPosed 模块
+# HyperAlive / 魅族息屏 (io.github.askt_clot.hyperalive) —— LSPosed 模块
 
 > 在小米澎湃 OS4（Xiaomi HyperOS / Android 14+ / 17）上复刻魅族 Alive 壁纸「息屏 AOD ➔ 锁屏 ➔ 桌面」三态无缝连贯动画。  
 > 采用 **LSPosed 模块 + 自建 WallpaperService (GLES 3.0)** 实现。
@@ -11,17 +11,19 @@
    - **启航**：魅族经典圆形透镜，中心相框自转，全屏大圆爆发扩散铺满屏幕。
    - **留光**：45° 倾角流光拍立得双层相框遮罩，优雅绽放转场。
    - **星月**：魅族经典弯月星芒遮罩，32 帧离散掩码序列与高斯微朦胧渐开绽放铺满全屏。
+   - **轻启、山脉、银河**：另外三种照片息屏样式。
 2. **自定义壁纸跟随与取景框**：
    - 支持相册任意照片跟随息屏与锁屏。
    - 内置图片取景器，支持精准双指缩放、旋转、移动与一键复位居中。
+   - 六种照片息屏样式均可拖动预览或用水平、垂直滑块调整位置，拖动时显示参考线。
 3. **自绘魅族经典时钟 (FlymeClockView)**：
    - 纯 Canvas 自绘魅族特色时钟排版（双行堆叠、纵向拉伸、极简单行等风格）。
    - 支持时钟色彩、字体粗细、大小缩放微调，并附带农历日期与极简电量胶囊。
-4. **单槽位一体化架构（which=3 / FLAG_SYSTEM | FLAG_LOCK）**：
-   - 统一由 `com.qihang.aod.QihangWallpaper` 承接锁屏与桌面（`which=3`）。
-   - **终生常驻单个 Surface 与单个 EGLContext**，彻底解决双槽位切换时 74ms 跨窗口 Surface 销毁重建造成的黑闪。
+4. **照片与动态壁纸**：
+   - 照片壁纸使用桌面和锁屏双槽，支持分别选择图片和纹理。
+   - 内置 36 款动态壁纸，由 `QihangDynamicWallpaper` 统一承接息屏、锁屏与桌面。
 5. **深度系统级转场协同（LSPosed Hook）**：
-   - **系统电源前馈**：Hook `PowerManagerService`，`goToSleep` 瞬时广播 `mode=0`，`wakeUp` 瞬时广播对应亮屏/解锁模式。
+   - **系统电源前馈**：监听主屏所在的 `PowerGroup` 状态，分发息屏和亮屏转场。
    - **防黑屏重定向**：`DisplayPowerState.setScreenState` 将断电入参重定向为 `STATE_DOZE`，杜绝 OLED 物理断电黑闪；阻断 `prepareColorFade` 硬件淡黑。
    - **SystemUI 协同**：监听 `ScrimController.updateScrims` 兜底三态分发；整体拦截 `KeyguardPanelViewController.doWallpaperBlackAnim` 黑屏动画图层。
 
@@ -32,11 +34,11 @@
 | 版本 | 核心变更说明 |
 | :--- | :--- |
 | **v1.0.0** | 实现「启航」与「留光」双息屏视觉、Flyme 自绘时钟排版、壁纸跟随与基础 LSPosed 转场 Hook。 |
-| **v1.0.1** | 1.1 稳定基线版。完善双槽位壁纸架构（which=1 桌面 + which=2 锁屏），协同 HyperOS 原生全屏 AOD（`full_screen_aod_on` 模式），留光相框遮罩高清屏适配。 |
+| **v1.0.1** | 完善双槽位壁纸架构（which=1 桌面 + which=2 锁屏），协同 HyperOS 原生全屏 AOD（`full_screen_aod_on` 模式），留光相框遮罩高清屏适配。 |
 | **v1.0.2** | 全面升级为单槽位 `which=3` 一体化常驻渲染，彻底消灭 74ms 跨窗口黑闪；深度注入 `system_server` 电源前馈与 Doze 状态重定向；推出自研免 Gradle 极速 Python 构建工具链。 |
 | **v1.0.3** | 修复已知问题，提升稳定性，新增星月息屏样式 |
-| **v1.0.4** | 修复桌面到息屏的亮度异常问题，修复黑闪问题，优化UI界面，提示稳定性 |
-| **v1.0.5** | 修复已知问题，新增动态壁纸，新增轻启，山脉，银河息屏样式 |
+| **v1.0.4** | 修复桌面进入息屏时的亮度异常和部分黑闪问题，优化界面并提升稳定性。 |
+| **v1.0.5** | 新增 36 款动态壁纸，以及轻启、山脉、银河三种息屏样式。支持拖动和滑块调整六种息屏样式的位置，修正魅族时钟的农历日期。 |
 
 ---
 
@@ -48,7 +50,7 @@
 HyperAlive/
 ├── app/src/main/
 │   ├── AndroidManifest.xml        # 包名、版本和 LSPosed 模块声明
-│   ├── java/com/hyperalive/aod/    # 壁纸引擎、预览编辑器、时钟和 LSPosed Hook
+│   ├── java/io/github/askt_clot/hyperalive/    # 壁纸引擎、预览编辑器、时钟和 LSPosed Hook
 │   ├── assets/                   # 动态壁纸资源、照片息屏遮罩和 GLSL 着色器
 │   └── res/                      # 图标、文案和 Android 资源
 ├── stub/                         # 离线编译使用的 Xposed API 桩
@@ -59,6 +61,10 @@ HyperAlive/
 ### 下载与安装
 
 下载安装包后，在 LSPosed 中启用 HyperAlive，按第四节设置作用域。 [GitHub Releases](https://github.com/Askt-clot/HyperAlive/releases/latest)
+
+从旧包名 `com.hyperalive.aod` 或 `com.qihang.aod` 迁移时，Android 会将新包视为独立应用。请在 LSPosed 中停用旧模块、启用新模块并重新设置作用域，再在新应用中设置壁纸。旧应用的私有设置不会自动迁移。
+
+GitHub Releases 中的 v1.0.0 至 v1.0.5 APK 均已迁移到新包名。v1.0.0 和 v1.0.1 的实际版本名称已更正，版本代码分别为 `1` 和 `2`。历史标签保留了当时的源码，当前源码以 `main` 分支为准。
 
 ### 本地构建
 

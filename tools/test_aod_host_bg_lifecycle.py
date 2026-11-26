@@ -551,20 +551,20 @@ public class TextView extends View {
     public void setText(CharSequence t) { text = t; }
 }
 """,
-    "com/hyperalive/aod/AodStyleSettings.java": r"""
-package com.hyperalive.aod;
+    "io/github/askt_clot/hyperalive/AodStyleSettings.java": r"""
+package io.github.askt_clot.hyperalive;
 public final class AodStyleSettings {
-    public static final String ACTION_STYLE_CHANGED = "com.hyperalive.aod.STYLE_CHANGED";
+    public static final String ACTION_STYLE_CHANGED = "io.github.askt_clot.hyperalive.STYLE_CHANGED";
     public static final String KEY_STYLE = "aod_style";
     public static final int STYLE_SET_SAIL = 0;
 }
 """,
-    "com/hyperalive/aod/ClockSettings.java": r"""
-package com.hyperalive.aod;
+    "io/github/askt_clot/hyperalive/ClockSettings.java": r"""
+package io.github.askt_clot.hyperalive;
 import android.content.Context;
 import android.content.Intent;
 public final class ClockSettings {
-    public static final String ACTION_STYLE_CHANGED = "com.hyperalive.aod.CLOCK_CHANGED";
+    public static final String ACTION_STYLE_CHANGED = "io.github.askt_clot.hyperalive.CLOCK_CHANGED";
     public static final String PREF_NAME = "clock_prefs";
     public static final class Config {
         public boolean enabled;
@@ -578,8 +578,8 @@ public final class ClockSettings {
     public static void saveLocal(Context c, Config a, Config l) {}
 }
 """,
-    "com/hyperalive/aod/FlymeClockView.java": r"""
-package com.hyperalive.aod;
+    "io/github/askt_clot/hyperalive/FlymeClockView.java": r"""
+package io.github.askt_clot.hyperalive;
 import android.content.Context;
 import android.view.View;
 public class FlymeClockView extends View {
@@ -591,14 +591,14 @@ public class FlymeClockView extends View {
     public void setFocusable(boolean b) {}
 }
 """,
-    "com/hyperalive/aod/hook/HookUtils.java": r"""
-package com.hyperalive.aod.hook;
+    "io/github/askt_clot/hyperalive/hook/HookUtils.java": r"""
+package io.github.askt_clot.hyperalive.hook;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 public final class HookUtils {
-    public static final String PKG_SELF = "com.hyperalive.aod";
+    public static final String PKG_SELF = "io.github.askt_clot.hyperalive";
     public static final String PKG_ALIVE = "com.flyme.alivewallpaper";
     public static final Map<String, String> PROPS = new HashMap<>();
     public static final List<String> LOGS = new ArrayList<>();
@@ -623,22 +623,22 @@ public final class HookUtils {
     public static void setField(Object obj, String name, Object val) {}
 }
 """,
-    "com/hyperalive/aod/hook/SystemUiHook.java": r"""
-package com.hyperalive.aod.hook;
+    "io/github/askt_clot/hyperalive/hook/SystemUiHook.java": r"""
+package io.github.askt_clot.hyperalive.hook;
 public final class SystemUiHook {
     public static void installClockDrawGate(ClassLoader cl) {}
 }
 """,
-    "com/hyperalive/aod/hook/AodHook.java": r"""
-package com.hyperalive.aod.hook;
+    "io/github/askt_clot/hyperalive/hook/AodHook.java": r"""
+package io.github.askt_clot.hyperalive.hook;
 import android.view.View;
 public final class AodHook {
     public static void ensureNativeAodVisible(View v, boolean active, long cycle) {}
     public static void installHostLifecycleHooks(View v) {}
 }
 """,
-    "com/hyperalive/aod/hook/NativeClockHandoff.java": r"""
-package com.hyperalive.aod.hook;
+    "io/github/askt_clot/hyperalive/hook/NativeClockHandoff.java": r"""
+package io.github.askt_clot.hyperalive.hook;
 import android.view.View;
 import android.widget.TextView;
 import java.lang.ref.WeakReference;
@@ -701,11 +701,11 @@ import com.android.systemui.shade.NotificationShadeWindowView;
 import com.android.systemui.statusbar.phone.ScrimView;
 import com.miui.aod.AODView;
 import com.miui.clock.allInOne.TimeView;
-import com.hyperalive.aod.FlymeClockView;
-import com.hyperalive.aod.hook.AodHostBackgroundTracker;
-import com.hyperalive.aod.hook.HookUtils;
-import com.hyperalive.aod.hook.StateCoordinator;
-import com.hyperalive.aod.hook.ViewTreeSweeper;
+import io.github.askt_clot.hyperalive.FlymeClockView;
+import io.github.askt_clot.hyperalive.hook.AodHostBackgroundTracker;
+import io.github.askt_clot.hyperalive.hook.HookUtils;
+import io.github.askt_clot.hyperalive.hook.StateCoordinator;
+import io.github.askt_clot.hyperalive.hook.ViewTreeSweeper;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -811,7 +811,7 @@ public final class AodHostBgLifecycleTest {
                                 "android.widget.FrameLayout", "FrameLayout", "keyguard_root_view",
                                 1200, 2608, 1200, 2608)
                         && !AodHostBackgroundTracker.isConfirmedAodHostCandidate(
-                                "com.hyperalive.aod.FlymeClockView", "FlymeClockView", "",
+                                "io.github.askt_clot.hyperalive.FlymeClockView", "FlymeClockView", "",
                                 1200, 2608, 1200, 2608)
                         && !AodHostBackgroundTracker.isConfirmedAodHostCandidate(
                                 "android.widget.FrameLayout", "FrameLayout", "clock_container",
@@ -1151,7 +1151,7 @@ public final class AodHostBgLifecycleTest {
         android.os.Handler.clearQueueForTest();
         SystemClock.uptimeMs = 1000L;
         final android.app.WallpaperManager wm = new android.app.WallpaperManager();
-        wm.mockSystemInfo = new android.app.WallpaperInfo("com.hyperalive.aod", "com.hyperalive.aod.QihangWallpaperService");
+        wm.mockSystemInfo = new android.app.WallpaperInfo("io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangWallpaperService");
         wm.mockLockId = -1;
         final ContentResolver liveCr = new ContentResolver();
         final DisplayManager liveDm = new DisplayManager();
@@ -1217,7 +1217,7 @@ public final class AodHostBgLifecycleTest {
                         && AodHostBackgroundTracker.trackedCount() == 0);
 
         // Re-acquire lock & suppress host again, then verify WMS query failure restores host immediately after completion!
-        wm.mockSystemInfo = new android.app.WallpaperInfo("com.hyperalive.aod", "com.hyperalive.aod.QihangWallpaperService");
+        wm.mockSystemInfo = new android.app.WallpaperInfo("io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangWallpaperService");
         StateCoordinator.invalidateWallpaperOwnedCache();
         StateCoordinator.setCachedWallpaperSlots(true, true);
         AodHostBackgroundTracker.reconcileHost(host, r, true);
@@ -1612,7 +1612,7 @@ public final class AodHostBgLifecycleTest {
         android.os.Handler.drainMainQueueForTest();
         final android.app.WallpaperManager wm = new android.app.WallpaperManager();
         final java.util.concurrent.atomic.AtomicInteger lockWakes = new java.util.concurrent.atomic.AtomicInteger();
-        wm.mockSystemInfo = new android.app.WallpaperInfo("com.hyperalive.aod", "QihangWallpaper");
+        wm.mockSystemInfo = new android.app.WallpaperInfo("io.github.askt_clot.hyperalive", "QihangWallpaper");
         StateCoordinator.sContext = new Context() {
             @Override public Object getSystemService(String name) {
                 return WALLPAPER_SERVICE.equals(name) ? wm : null;
@@ -1696,10 +1696,10 @@ public final class AodHostBgLifecycleTest {
 
 
 def check_source_contracts():
-    sweeper = (APP_JAVA / "com/hyperalive/aod/hook/ViewTreeSweeper.java").read_text(encoding="utf-8")
-    aod_hook = (APP_JAVA / "com/hyperalive/aod/hook/AodHook.java").read_text(encoding="utf-8")
-    coord = (APP_JAVA / "com/hyperalive/aod/hook/StateCoordinator.java").read_text(encoding="utf-8")
-    tracker = (APP_JAVA / "com/hyperalive/aod/hook/AodHostBackgroundTracker.java").read_text(encoding="utf-8")
+    sweeper = (APP_JAVA / "io/github/askt_clot/hyperalive/hook/ViewTreeSweeper.java").read_text(encoding="utf-8")
+    aod_hook = (APP_JAVA / "io/github/askt_clot/hyperalive/hook/AodHook.java").read_text(encoding="utf-8")
+    coord = (APP_JAVA / "io/github/askt_clot/hyperalive/hook/StateCoordinator.java").read_text(encoding="utf-8")
+    tracker = (APP_JAVA / "io/github/askt_clot/hyperalive/hook/AodHostBackgroundTracker.java").read_text(encoding="utf-8")
 
     assert "setBackground(null)" not in sweeper, "ViewTreeSweeper must not call untracked setBackground(null)"
     assert "isDarkBackground(" not in sweeper, "Legacy ViewTreeSweeper.isDarkBackground must remain removed"
@@ -1746,10 +1746,10 @@ def main():
         ] + shim_files, check=True)
 
         prod_files = [
-            str(APP_JAVA / "com/hyperalive/aod/hook/AodHostBackgroundTracker.java"),
-            str(APP_JAVA / "com/hyperalive/aod/hook/ViewTreeSweeper.java"),
-            str(APP_JAVA / "com/hyperalive/aod/hook/StateCoordinator.java"),
-            str(APP_JAVA / "com/hyperalive/aod/TransitionPolicy.java"),
+            str(APP_JAVA / "io/github/askt_clot/hyperalive/hook/AodHostBackgroundTracker.java"),
+            str(APP_JAVA / "io/github/askt_clot/hyperalive/hook/ViewTreeSweeper.java"),
+            str(APP_JAVA / "io/github/askt_clot/hyperalive/hook/StateCoordinator.java"),
+            str(APP_JAVA / "io/github/askt_clot/hyperalive/TransitionPolicy.java"),
         ]
         subprocess.run([
             javac, "-nowarn", "-encoding", "UTF-8", "-source", "8", "-target", "8",

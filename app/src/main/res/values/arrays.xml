@@ -7,6 +7,6 @@
         <item>miui.systemui.plugin</item>
         <item>com.miui.aod</item>
         <item>com.android.thememanager</item>
-        <item>com.hyperalive.aod</item>
+        <item>io.github.askt_clot.hyperalive</item>
     </string-array>
 </resources>

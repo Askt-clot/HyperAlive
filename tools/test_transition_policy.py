@@ -12,7 +12,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "app/src/main/java/com/hyperalive/aod/TransitionPolicy.java"
+SOURCE = ROOT / "app/src/main/java/io/github/askt_clot/hyperalive/TransitionPolicy.java"
 
 
 def _resolve_jdk_tool(name: str) -> str:
@@ -29,7 +29,7 @@ def _resolve_jdk_tool(name: str) -> str:
 
 
 HARNESS = r"""
-package com.hyperalive.aod;
+package io.github.askt_clot.hyperalive;
 
 public final class TransitionPolicyRegression {
     private static int assertions;
@@ -136,7 +136,7 @@ def main():
             "-target", "8", "-d", str(work), str(SOURCE), str(harness),
         ], check=True)
         subprocess.run([
-            _resolve_jdk_tool("java"), "-cp", str(work), "com.hyperalive.aod.TransitionPolicyRegression",
+            _resolve_jdk_tool("java"), "-cp", str(work), "io.github.askt_clot.hyperalive.TransitionPolicyRegression",
         ], check=True)
 
 

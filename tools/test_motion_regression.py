@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-JAVA = ROOT / "app/src/main/java/com/hyperalive/aod"
+JAVA = ROOT / "app/src/main/java/io/github/askt_clot/hyperalive"
 
 
 def _resolve_jdk_tool(name: str) -> str:
@@ -44,7 +44,7 @@ public final class Matrix {
 """
 
 HARNESS = r"""
-package com.hyperalive.aod;
+package io.github.askt_clot.hyperalive;
 import java.lang.reflect.Field;
 
 public final class MotionRegression {
@@ -457,12 +457,12 @@ def main():
         sources = {
             "android/opengl/Matrix.java": MATRIX,
             "android/util/Log.java": "package android.util; public final class Log {public static int i(String t,String m){return 0;}}",
-            "com/hyperalive/aod/AodStyleSettings.java": (
-                "package com.hyperalive.aod; final class AodStyleSettings {"
+            "io/github/askt_clot/hyperalive/AodStyleSettings.java": (
+                "package io.github.askt_clot.hyperalive; final class AodStyleSettings {"
                 "static final int STYLE_SET_SAIL=0, STYLE_LEAVE_LIGHT=1, STYLE_MOON=2,"
                 " STYLE_DOOR=3, STYLE_MOUNTAIN=4, STYLE_GALAXY=5;}"
             ),
-            "com/hyperalive/aod/MotionRegression.java": HARNESS,
+            "io/github/askt_clot/hyperalive/MotionRegression.java": HARNESS,
         }
         stub_paths = []
         for relative, text in sources.items():
@@ -478,7 +478,7 @@ def main():
             str(JAVA / "LensMatrices.java"), str(JAVA / "PhotoMaskStyle.java"), *stub_paths,
         ], check=True)
         subprocess.run([
-            _resolve_jdk_tool("java"), "-cp", str(work), "com.hyperalive.aod.MotionRegression",
+            _resolve_jdk_tool("java"), "-cp", str(work), "io.github.askt_clot.hyperalive.MotionRegression",
         ], check=True)
 
 

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.hyperalive.aod"
+    package="io.github.askt_clot.hyperalive"
     android:versionCode="20261124"
     android:versionName="1.0.5">
 
@@ -111,13 +111,13 @@
 
         <provider
             android:name=".ClockConfigProvider"
-            android:authorities="com.hyperalive.aod.clockconfig"
+            android:authorities="io.github.askt_clot.hyperalive.clockconfig"
             android:exported="true"
             android:directBootAware="true" />
 
         <provider
             android:name=".WallpaperPreviewProvider"
-            android:authorities="com.hyperalive.aod.wallpaperpreview"
+            android:authorities="io.github.askt_clot.hyperalive.wallpaperpreview"
             android:exported="true"
             android:directBootAware="true" />
 

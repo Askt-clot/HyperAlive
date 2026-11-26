@@ -45,7 +45,7 @@ KS = DEFAULT_KS
 OUT = DEFAULT_OUT
 FINAL = DEFAULT_FINAL
 
-INIT_CLASS = 'com.hyperalive.aod.XposedInit'
+INIT_CLASS = 'io.github.askt_clot.hyperalive.XposedInit'
 MIN_API = 29
 DEFAULT_TARGET_API = 35
 

@@ -269,7 +269,7 @@ public class Context {
     }
 
     public String getPackageName() {
-        return "com.hyperalive.aod";
+        return "io.github.askt_clot.hyperalive";
     }
 
     public ContentResolver getContentResolver() {
@@ -1178,9 +1178,9 @@ HARNESS = r"""
 import android.content.Context;
 import android.util.Log;
 
-import com.hyperalive.aod.HyperOsWallpaperHelper;
-import com.hyperalive.aod.PreModuleWallpaperBackup;
-import com.hyperalive.aod.Root;
+import io.github.askt_clot.hyperalive.HyperOsWallpaperHelper;
+import io.github.askt_clot.hyperalive.PreModuleWallpaperBackup;
+import io.github.askt_clot.hyperalive.Root;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -1587,7 +1587,7 @@ public final class WallpaperBackupRegression {
                 !Root.isSetWallSuccess("unexpected warning\nSETWALL OK which=3 cn=a/b"));
 
         // 6b. Safe rollback: only delete newly created backup when zero state changed; null baseline keeps backup
-        com.hyperalive.aod.Phase2RegressionBridge.runAll();
+        io.github.askt_clot.hyperalive.Phase2RegressionBridge.runAll();
         PreModuleWallpaperBackup.RollbackResult nullBaseRb =
                 PreModuleWallpaperBackup.rollbackCreatedBackupIfUnapplied(ctx);
         check("null baseline conservatively retains backup", !nullBaseRb.deleted);
@@ -1669,7 +1669,7 @@ public final class WallpaperBackupRegression {
                 HyperOsWallpaperHelper.Mode.AMBIGUOUS_OR_UNVERIFIED,
                 HyperOsWallpaperHelper.crossValidateWithBridge(res, timeoutProbe, 0).mode);
         String hyperAliveWmsProbe = okProbeLiveHomeLock.replace("\"sysComp\":\"null\"",
-                "\"sysComp\":\"ComponentInfo{com.hyperalive.aod/com.hyperalive.aod.QihangWallpaper}\"");
+                "\"sysComp\":\"ComponentInfo{io.github.askt_clot.hyperalive/io.github.askt_clot.hyperalive.QihangWallpaper}\"");
         checkEq("crossValidate rejects when WMS already bound to HyperAlive",
                 HyperOsWallpaperHelper.Mode.AMBIGUOUS_OR_UNVERIFIED,
                 HyperOsWallpaperHelper.crossValidateWithBridge(
@@ -1713,7 +1713,7 @@ public final class WallpaperBackupRegression {
                 "/tmp/lock_wallpaper.jpg", r5LockSha,
                 "", "com.miui.aod", "com.miui.aod");
         checkEq("restore spec preserves clockStyleType", "rhombus", specJson.optString("clockStyleType", ""));
-        checkEq("restore spec filters pendingPackage against PackageUtils whitelist (never com.hyperalive.aod)",
+        checkEq("restore spec filters pendingPackage against PackageUtils whitelist (never io.github.askt_clot.hyperalive)",
                 "com.miui.aod", specJson.optString("pendingPackage", ""));
         checkEq("restore spec enableBlur=0", 0, specJson.optInt("enableBlur", -99));
         checkEq("restore spec effectId=0", 0, specJson.optInt("effectId", -99));
@@ -1726,7 +1726,7 @@ public final class WallpaperBackupRegression {
                 0, hXml, hXml,
                 "/tmp/home_wallpaper.jpg", r5HomeSha,
                 "/tmp/lock_wallpaper.jpg", r5LockSha,
-                "", "com.hyperalive.aod", "");
+                "", "io.github.askt_clot.hyperalive", "");
         checkEq("fallback pendingPackage when input not whitelisted",
                 "com.miui.aod", specFallbackPkg.optString("pendingPackage", ""));
         checkEq("literal null clockStyleType sanitized to empty string",
@@ -1757,11 +1757,11 @@ public final class WallpaperBackupRegression {
 
         // Phase2RegressionBridge extra check for verifySha256SumOutput
         check("sha256sum verification accepts matching hash",
-                com.hyperalive.aod.Phase2RegressionBridge.checkSha256SumHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkSha256SumHelper(
                         r5HomeSha + "  /data/user_de/0/com.miui.aod/files/templates/current/wallpaper_home\n__EXIT=0\n",
                         r5HomeSha));
         check("sha256sum verification rejects nonzero exit",
-                !com.hyperalive.aod.Phase2RegressionBridge.checkSha256SumHelper(
+                !io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkSha256SumHelper(
                         r5HomeSha + "  /tmp/x\n__EXIT=1\n", r5HomeSha));
 
         // 7. Legacy DEFAULT (v1 / missing OEM proof) conflict pre-check using real device_test_185102 fixture
@@ -1808,7 +1808,7 @@ public final class WallpaperBackupRegression {
                 extractKeyValSetting(settings1851Txt, "image_bg_selector"));
 
         HyperOsWallpaperHelper.LegacyDefaultSafetyResult conflict1851 =
-                com.hyperalive.aod.Phase2RegressionBridge.checkLegacyDefaultHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkLegacyDefaultHelper(
                         legacyInsp.metadata, gw1851, probe1851Raw);
         check("device_test_185102 legacy DEFAULT + live OEM image must BLOCK clear",
                 !conflict1851.safeToProceedDefaultClear);
@@ -1821,7 +1821,7 @@ public final class WallpaperBackupRegression {
 
         // Even if FS looked clean, AIDL probe reporting image + isDefault=false STILL blocks clear
         HyperOsWallpaperHelper.LegacyDefaultSafetyResult aidlOnlyConflict =
-                com.hyperalive.aod.Phase2RegressionBridge.checkLegacyDefaultHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkLegacyDefaultHelper(
                         legacyInsp.metadata, defaultGw, probe1851Raw);
         check("AIDL image conflict blocks legacy clear even with empty theme_magic FS",
                 !aidlOnlyConflict.safeToProceedDefaultClear);
@@ -1829,14 +1829,14 @@ public final class WallpaperBackupRegression {
 
         // Bridge probe failure / unverified also blocks legacy clear
         HyperOsWallpaperHelper.LegacyDefaultSafetyResult bridgeErrBlock =
-                com.hyperalive.aod.Phase2RegressionBridge.checkLegacyDefaultHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkLegacyDefaultHelper(
                         legacyInsp.metadata, defaultGw, "PROBE_ERR {\"ok\":false,\"error\":\"BINDER_PING_FAILED\"}");
         check("bridge error blocks legacy clear", !bridgeErrBlock.safeToProceedDefaultClear);
         checkEq("bridge error code", "legacy_default_bridge_unverified", bridgeErrBlock.code);
 
         // Genuine live OEM default + clean FS allows proceed
         HyperOsWallpaperHelper.LegacyDefaultSafetyResult liveDefAllowed =
-                com.hyperalive.aod.Phase2RegressionBridge.checkLegacyDefaultHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkLegacyDefaultHelper(
                         legacyInsp.metadata, defaultGw, okDefaultProbe);
         check("verified clean FS + AIDL default=true allows legacy clear", liveDefAllowed.safeToProceedDefaultClear);
 
@@ -1887,7 +1887,7 @@ public final class WallpaperBackupRegression {
         checkEq("Round 1 verified DEFAULT description normal",
                 "系统内置默认壁纸", r1Insp.metadata.getSystemDescription());
         check("Round 1 passes checkLegacyDefaultHelper without conflict check",
-                com.hyperalive.aod.Phase2RegressionBridge.checkLegacyDefaultHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkLegacyDefaultHelper(
                         r1Insp.metadata, gw1851, probe1851Raw).safeToProceedDefaultClear);
         PreModuleWallpaperBackup.clearBackup(v2Ctx);
         checkEq("Round 1 cleared cleanly to NONE before Round 2",
@@ -1914,7 +1914,7 @@ public final class WallpaperBackupRegression {
         check("unsigned v2 DEFAULT is treated as legacy/unverified",
                 unsignedInsp.metadata != null && unsignedInsp.metadata.isLegacyUnverifiedDefault());
         check("unsigned v2 DEFAULT blocked when OEM reports image",
-                !com.hyperalive.aod.Phase2RegressionBridge.checkLegacyDefaultHelper(
+                !io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkLegacyDefaultHelper(
                         unsignedInsp.metadata, gw1851, probe1851Raw).safeToProceedDefaultClear);
 
         // 8. Round-2 lifecycle regression: post-restore SET_STATIC + /data/system/users/0/wallpaper present must still choose OEM_HYPEROS
@@ -1945,15 +1945,15 @@ public final class WallpaperBackupRegression {
                 r5HomeSha, round2Cross.expectedHomeSha256);
 
         check("shouldRequireOemCrossValidation true for MIUI SET_STATIC even with sysInfo=null",
-                com.hyperalive.aod.Phase2RegressionBridge.checkShouldRequireOemHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkShouldRequireOemHelper(
                         1273, "com.miui.miwallpaper", ".wallpaperservice.ImageWallpaper", "SET_STATIC"));
         check("shouldRequireOemCrossValidation false for non-MIUI AOSP ImageWallpaper",
-                !com.hyperalive.aod.Phase2RegressionBridge.checkShouldRequireOemHelper(
+                !io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkShouldRequireOemHelper(
                         1273, "com.android.systemui", ".ImageWallpaper", "SET_STATIC"));
 
         checkEq("Round-2 SET_STATIC + readable standard file + OEM_CUSTOM_IMAGE still classifies as OEM_HYPEROS",
                 "OEM_HYPEROS",
-                com.hyperalive.aod.Phase2RegressionBridge.checkClassifyMiuiStaticHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkClassifyMiuiStaticHelper(
                         round2Cross, 1273, -1,
                         "com.miui.miwallpaper", ".wallpaperservice.ImageWallpaper", "SET_STATIC",
                         false, false, false, true));
@@ -1964,7 +1964,7 @@ public final class WallpaperBackupRegression {
                         defFs, postRestoreProbe, 0);
         checkEq("contradictory FS/AIDL on SET_STATIC must ABORT instead of PLAIN_STATIC",
                 "ABORT",
-                com.hyperalive.aod.Phase2RegressionBridge.checkClassifyMiuiStaticHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkClassifyMiuiStaticHelper(
                         ambiguousCross, 1273, -1,
                         "com.miui.miwallpaper", ".wallpaperservice.ImageWallpaper", "SET_STATIC",
                         false, false, true, true));
@@ -1975,7 +1975,7 @@ public final class WallpaperBackupRegression {
                         defFs, HyperOsWallpaperHelper.parseBridgeProbeOutput(okDefaultProbe), 0);
         checkEq("genuine non-OEM third-party SET_STATIC with confirmed default OEM uses PLAIN_STATIC",
                 "PLAIN_STATIC",
-                com.hyperalive.aod.Phase2RegressionBridge.checkClassifyMiuiStaticHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkClassifyMiuiStaticHelper(
                         cleanDefCross, 1274, -1,
                         "com.miui.miwallpaper", ".wallpaperservice.ImageWallpaper", "SET_STATIC",
                         false, false, true, true));
@@ -1983,7 +1983,7 @@ public final class WallpaperBackupRegression {
         // SET_LIVE_TO_CLEAR with lingering standard file rejects CONFIRMED_DEFAULT and ABORTs
         checkEq("SET_LIVE_TO_CLEAR with non-absent standard file aborts safely",
                 "ABORT",
-                com.hyperalive.aod.Phase2RegressionBridge.checkClassifyMiuiStaticHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkClassifyMiuiStaticHelper(
                         cleanDefCross, 1266, -1,
                         "com.miui.miwallpaper", ".wallpaperservice.ImageWallpaper", "SET_LIVE_TO_CLEAR",
                         false, false, true, false));
@@ -2083,26 +2083,26 @@ public final class WallpaperBackupRegression {
         String stdHomeASha = "5267ca90ef803dc013bd281fd5d669d2b33c4547ccdfee193e8886f69d9ebea9";
         String stdLockGradSha = "960737f3b60b231fc8e26caa1a1454c4ea99bdb9ff543cb93917a3fc3d02e669";
         check("detects diverged split desktop photo A vs stale OEM photo B",
-                com.hyperalive.aod.Phase2RegressionBridge.checkSplitDivergedHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkSplitDivergedHelper(
                         splitOemCross, true, stdHomeASha, true, stdLockGradSha));
         check("matching OEM split hashes are not marked diverged",
-                !com.hyperalive.aod.Phase2RegressionBridge.checkSplitDivergedHelper(
+                !io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkSplitDivergedHelper(
                         splitOemCross, true, r5HomeSha, true, r5LockSha));
         checkEq("diverged split desktop A + readable standard file ABORTs conservatively (no PLAIN_STATIC downgrade)",
                 "ABORT",
-                com.hyperalive.aod.Phase2RegressionBridge.checkClassifyMiuiSplitHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkClassifyMiuiSplitHelper(
                         splitOemCross, 1300, 1301,
                         "com.miui.miwallpaper", ".wallpaperservice.ImageWallpaper", "SET_STATIC",
                         true, false, false, true, true));
         checkEq("diverged split unreadable desktop file ABORTs conservatively",
                 "ABORT",
-                com.hyperalive.aod.Phase2RegressionBridge.checkClassifyMiuiSplitHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkClassifyMiuiSplitHelper(
                         splitOemCross, 1300, 1301,
                         "com.miui.miwallpaper", ".wallpaperservice.ImageWallpaper", "SET_STATIC",
                         true, false, false, false, true));
         checkEq("matching OEM split topology classifies as OEM_HYPEROS",
                 "OEM_HYPEROS",
-                com.hyperalive.aod.Phase2RegressionBridge.checkClassifyMiuiSplitHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkClassifyMiuiSplitHelper(
                         splitOemCross, 1300, 1301,
                         "com.miui.miwallpaper", ".wallpaperservice.ImageWallpaper", "SET_STATIC",
                         true, false, false, false, false));
@@ -2124,7 +2124,7 @@ public final class WallpaperBackupRegression {
                         && splitLockSha.equals(splitSpecJson.optString("stdLockSha256", "")));
         check("distinct split images are NOT flagged unsafe sameLayer",
                 !HyperOsWallpaperHelper.isSplitRestoreUnsafeSameLayer(splitSpecJson)
-                        && !com.hyperalive.aod.root.HyperOsWallpaperBridge.isUnsafeSplitSameLayerSpec(splitSpecJson));
+                        && !io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.isUnsafeSplitSameLayerSpec(splitSpecJson));
 
         JSONObject unsafeSameLayerSpec = HyperOsWallpaperHelper.buildBridgeRestoreSpecJson(
                 0, hXml, lXml,
@@ -2134,7 +2134,7 @@ public final class WallpaperBackupRegression {
                 true, HyperOsWallpaperHelper.MIUI_KEYGUARD_PICTORIAL_COMPONENT_FULL);
         check("identical-image split restore with sameEffectAndBlur & trusted pendingPkg is rejected pre-clear",
                 HyperOsWallpaperHelper.isSplitRestoreUnsafeSameLayer(unsafeSameLayerSpec)
-                        && com.hyperalive.aod.root.HyperOsWallpaperBridge.isUnsafeSplitSameLayerSpec(unsafeSameLayerSpec));
+                        && io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.isUnsafeSplitSameLayerSpec(unsafeSameLayerSpec));
 
         HyperOsWallpaperHelper.WallpaperDataXml diffEffectLockXml =
                 HyperOsWallpaperHelper.parseWallpaperDataXml(
@@ -2148,7 +2148,7 @@ public final class WallpaperBackupRegression {
         check("identical-image split restore with distinct effectId sets sameEffectAndBlur=false",
                 !diffEffectSplitSpec.optBoolean("sameEffectAndBlur", true)
                         && !HyperOsWallpaperHelper.isSplitRestoreUnsafeSameLayer(diffEffectSplitSpec)
-                        && !com.hyperalive.aod.root.HyperOsWallpaperBridge.isUnsafeSplitSameLayerSpec(diffEffectSplitSpec));
+                        && !io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.isUnsafeSplitSameLayerSpec(diffEffectSplitSpec));
 
         // prepareOemRestoreSpec must return null BEFORE allow_reset=1 on unsafe split sameLayer snapshot
         File unsafePrepDir = new File(workRoot, "unsafe_split_prep_user0");
@@ -2183,7 +2183,7 @@ public final class WallpaperBackupRegression {
         unsafeOemObj.put("files", unsafeFilesArr);
         unsafeMetaJson.put("oem", unsafeOemObj);
         check("prepareOemRestoreSpec rejects unsafe split sameLayer snapshot BEFORE allow_reset=1",
-                com.hyperalive.aod.Phase2RegressionBridge.checkPrepareOemRestoreSpecHelper(
+                io.github.askt_clot.hyperalive.Phase2RegressionBridge.checkPrepareOemRestoreSpecHelper(
                         unsafePrepDir, unsafeMetaJson) == null);
 
         JSONObject evalHomeSlot = new JSONObject()
@@ -2208,7 +2208,7 @@ public final class WallpaperBackupRegression {
                 .put("stdSys", new JSONObject().put("exists", true).put("isFile", true).put("sha256", r5HomeSha))
                 .put("stdLock", new JSONObject().put("exists", true).put("isFile", true).put("sha256", splitLockSha));
         check("merged restore contract still rejects split lockId",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, splitPictorialWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
@@ -2219,14 +2219,14 @@ public final class WallpaperBackupRegression {
         JSONObject mergedWms = new JSONObject()
                 .put("sysId", 1300).put("lockId", -1).put("sysComp", "null").put("lockComp", "null");
         check("merged restore rejects leftover stdLock file",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, mergedWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
                         false, "", mergedDirtyFs, "", "").equals("merged_unexpected_std_lock_file"));
         checkEq("allowSplitRestore accepts clean MiuiKeyguardPictorialWallpaper split WMS state + matching distinct std hashes",
                 "",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, splitPictorialWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
@@ -2244,7 +2244,7 @@ public final class WallpaperBackupRegression {
                 .put("wallpaperChanged2", "com.miui.aod");
         checkEq("allowSplitRestore evaluateRestoreState rejects same-image sameEffectAndBlur trusted-pending split",
                 "split_same_layer_alpha_zero_risk",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlotSameSha, splitUnsafeSameLayerWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", r5HomeSha,
@@ -2256,14 +2256,14 @@ public final class WallpaperBackupRegression {
                 .put("wallpaperChanged2", "android");
         checkEq("allowSplitRestore evaluateRestoreState allows same-image split when non-PackageUtils.d pendingPkg=android breaks b()/y()",
                 "",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlotSameSha, splitSafeNonTrustedPendingWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", r5HomeSha,
                         true, HyperOsWallpaperHelper.MIUI_KEYGUARD_PICTORIAL_COMPONENT_FULL,
                         splitSameShaValidFs, r5HomeSha, r5HomeSha));
         check("allowSplitRestore rejects lockId=-1 (must not silently accept merged)",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, mergedWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
@@ -2275,14 +2275,14 @@ public final class WallpaperBackupRegression {
                 .put("lockXmlComp", "com.miui.miwallpaper/.wallpaperservice.MiuiKeyguardPictorialWallpaper");
         checkEq("allowSplitRestore accepts SET_STATIC wallpaper_info.xml lockXmlComp when AIDL lockComp is null",
                 "",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, splitXmlFallbackWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
                         true, HyperOsWallpaperHelper.MIUI_KEYGUARD_PICTORIAL_COMPONENT_FULL,
                         splitValidFs, r5HomeSha, splitLockSha));
         check("allowSplitRestore rejects mismatched expectedWmsLockComp",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, splitXmlFallbackWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
@@ -2293,7 +2293,7 @@ public final class WallpaperBackupRegression {
                 .put("sysComp", "null")
                 .put("lockComp", "ComponentInfo{com.third.party/.Live}");
         check("allowSplitRestore still rejects third-party lockComp",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, dirtyLockWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
@@ -2303,7 +2303,7 @@ public final class WallpaperBackupRegression {
                 .put("stdLock", new JSONObject().put("exists", false).put("isFile", false));
         checkEq("allowSplitRestore rejects missing stdLock file",
                 "std_lock_missing",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, splitPictorialWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
@@ -2314,7 +2314,7 @@ public final class WallpaperBackupRegression {
                 .put("stdLock", new JSONObject().put("exists", true).put("isFile", true).put("sha256", splitLockSha));
         checkEq("allowSplitRestore rejects mismatched stdSys sha256",
                 "std_sys_sha256_mismatch",
-                com.hyperalive.aod.root.HyperOsWallpaperBridge.evaluateRestoreState(
+                io.github.askt_clot.hyperalive.root.HyperOsWallpaperBridge.evaluateRestoreState(
                         evalHomeSlot, evalLockSlot, splitPictorialWms,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/home_wallpaper.jpg", r5HomeSha,
                         true, "/data/system/theme_magic/users/0/wallpaper/image/lock_wallpaper.jpg", splitLockSha,
@@ -2323,57 +2323,57 @@ public final class WallpaperBackupRegression {
 
         // StateCoordinator authoritative + fail-open snapshot & AOD slot distinction
         check("authoritative null WMS overrides stale prop=1",
-                !com.hyperalive.aod.hook.StateCoordinator.evaluateWallpaperOwnership(true, null, -1, null, "1"));
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.evaluateWallpaperOwnership(true, null, -1, null, "1"));
         check("unavailable WMS fails open (must NOT trust prop=1)",
-                !com.hyperalive.aod.hook.StateCoordinator.evaluateWallpaperOwnership(false, null, -1, null, "1"));
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.evaluateWallpaperOwnership(false, null, -1, null, "1"));
         check("unavailable WMS with prop=0 stays inactive",
-                !com.hyperalive.aod.hook.StateCoordinator.evaluateWallpaperOwnership(false, null, -1, null, "0"));
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.evaluateWallpaperOwnership(false, null, -1, null, "0"));
 
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipDetail homeOnly =
-                com.hyperalive.aod.hook.StateCoordinator.evaluateWallpaperOwnershipDetailByName(
-                        true, "com.hyperalive.aod", "com.hyperalive.aod.QihangWallpaper",
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipDetail homeOnly =
+                io.github.askt_clot.hyperalive.hook.StateCoordinator.evaluateWallpaperOwnershipDetailByName(
+                        true, "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangWallpaper",
                         1301, "com.miui.miwallpaper", "com.miui.miwallpaper.wallpaperservice.MiuiKeyguardPictorialWallpaper");
         check("home-only HyperAlive owns home slot but NOT lock/AOD slot",
                 homeOnly.homeOwned && !homeOnly.lockOwned && homeOnly.anyOwned());
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipDetail mergedOwned =
-                com.hyperalive.aod.hook.StateCoordinator.evaluateWallpaperOwnershipDetailByName(
-                        true, "com.hyperalive.aod", "com.hyperalive.aod.QihangWallpaper",
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipDetail mergedOwned =
+                io.github.askt_clot.hyperalive.hook.StateCoordinator.evaluateWallpaperOwnershipDetailByName(
+                        true, "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangWallpaper",
                         -1, null, null);
         check("merged HyperAlive owns both home and lock/AOD slots",
                 mergedOwned.homeOwned && mergedOwned.lockOwned);
 
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot coldSnap =
-                new com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot(false, true, true, 1L, 100L);
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot coldSnap =
+                new io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot(false, true, true, 1L, 100L);
         check("cold-start invalid snapshot fails open on all slots",
-                !com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(coldSnap, 200L, 10000L, 1L, false)
-                        && !com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(coldSnap, 200L, 10000L, 1L, true));
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(coldSnap, 200L, 10000L, 1L, false)
+                        && !io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(coldSnap, 200L, 10000L, 1L, true));
 
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot homeOnlySnap =
-                new com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot(true, true, false, 5L, 1000L);
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot homeOnlySnap =
+                new io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot(true, true, false, 5L, 1000L);
         check("valid home-only snapshot allows ANY/HOME but rejects LOCK/AOD",
-                com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(homeOnlySnap, 2000L, 10000L, 5L, false)
-                        && !com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(homeOnlySnap, 2000L, 10000L, 5L, true));
+                io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(homeOnlySnap, 2000L, 10000L, 5L, false)
+                        && !io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(homeOnlySnap, 2000L, 10000L, 5L, true));
 
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot validBothSnap =
-                new com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot(true, true, true, 5L, 1000L);
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot validBothSnap =
+                new io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot(true, true, true, 5L, 1000L);
         check("valid snapshot expires at TTL boundary (fail-open)",
-                com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(validBothSnap, 10999L, 10000L, 5L, true)
-                        && !com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(validBothSnap, 11000L, 10000L, 5L, true));
+                io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(validBothSnap, 10999L, 10000L, 5L, true)
+                        && !io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(validBothSnap, 11000L, 10000L, 5L, true));
         check("pre-refresh window [7000ms, 9999ms] schedules refresh without dropping active true",
-                !com.hyperalive.aod.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 7999L, 7000L, 10000L, 5L)
-                        && com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(validBothSnap, 8000L, 10000L, 5L, true)
-                        && com.hyperalive.aod.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 8000L, 7000L, 10000L, 5L)
-                        && com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(validBothSnap, 10999L, 10000L, 5L, true)
-                        && com.hyperalive.aod.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 10999L, 7000L, 10000L, 5L));
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 7999L, 7000L, 10000L, 5L)
+                        && io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(validBothSnap, 8000L, 10000L, 5L, true)
+                        && io.github.askt_clot.hyperalive.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 8000L, 7000L, 10000L, 5L)
+                        && io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(validBothSnap, 10999L, 10000L, 5L, true)
+                        && io.github.askt_clot.hyperalive.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 10999L, 7000L, 10000L, 5L));
         check("epoch bump invalidates snapshot immediately (owned -> native exit)",
-                !com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(validBothSnap, 1500L, 10000L, 6L, false)
-                        && com.hyperalive.aod.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 1500L, 7000L, 10000L, 6L));
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(validBothSnap, 1500L, 10000L, 6L, false)
+                        && io.github.askt_clot.hyperalive.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 1500L, 7000L, 10000L, 6L));
         check("clock regression fails open safely",
-                !com.hyperalive.aod.hook.StateCoordinator.isSnapshotActive(validBothSnap, 999L, 10000L, 5L, false)
-                        && com.hyperalive.aod.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 999L, 7000L, 10000L, 5L));
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.isSnapshotActive(validBothSnap, 999L, 10000L, 5L, false)
+                        && io.github.askt_clot.hyperalive.hook.StateCoordinator.shouldScheduleOwnershipPreRefresh(validBothSnap, 999L, 7000L, 10000L, 5L));
 
         // 11. Rewrite Phase 2 & 3 behavioral unit checks (Root timeout/interrupt, LspState, raw settings, batch probe, canonicalize)
-        assertions += com.hyperalive.aod.Phase2RegressionBridge.runRewriteUnitChecks();
+        assertions += io.github.askt_clot.hyperalive.Phase2RegressionBridge.runRewriteUnitChecks();
 
         System.out.println("Wallpaper backup regression: " + assertions + " assertions passed (+ Phase2 + R5 AIDL + split topology + Rewrite unit checks)");
     }
@@ -2381,7 +2381,7 @@ public final class WallpaperBackupRegression {
 """
 
 HARNESS_PHASE2_BRIDGE = r"""
-package com.hyperalive.aod;
+package io.github.askt_clot.hyperalive;
 
 public final class Phase2RegressionBridge {
     private static int unitAssertions = 0;
@@ -2501,24 +2501,24 @@ public final class Phase2RegressionBridge {
         check("single slot verification rejects lingering lock slot", !singleResidualLock.ok);
 
         PreModuleWallpaperBackup.SlotVerifyResult dualPartial = PreModuleWallpaperBackup.evaluateAppliedSlots(
-                true, "com.hyperalive.aod", "com.hyperalive.aod.QihangHomeWallpaper",
-                "com.hyperalive.aod", "com.hyperalive.aod.QihangWallpaper",
+                true, "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangHomeWallpaper",
+                "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangWallpaper",
                 35, 1301, 1302,
-                "com.hyperalive.aod", "com.hyperalive.aod.QihangHomeWallpaper",
+                "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangHomeWallpaper",
                 "com.miui.miwallpaper", "com.miui.miwallpaper.wallpaperservice.ImageWallpaper",
-                makeXml(1301, "com.hyperalive.aod", "com.hyperalive.aod.QihangHomeWallpaper",
+                makeXml(1301, "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangHomeWallpaper",
                         "", true, 1302, "com.miui.miwallpaper",
                         "com.miui.miwallpaper.wallpaperservice.ImageWallpaper"));
         check("dual slot verification rejects mismatched lock slot", !dualPartial.ok);
 
         PreModuleWallpaperBackup.SlotVerifyResult dualOk = PreModuleWallpaperBackup.evaluateAppliedSlots(
-                true, "com.hyperalive.aod", "com.hyperalive.aod.QihangHomeWallpaper",
-                "com.hyperalive.aod", "com.hyperalive.aod.QihangWallpaper",
+                true, "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangHomeWallpaper",
+                "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangWallpaper",
                 35, 1301, 1302,
-                "com.hyperalive.aod", "com.hyperalive.aod.QihangHomeWallpaper",
-                "com.hyperalive.aod", "com.hyperalive.aod.QihangWallpaper",
-                makeXml(1301, "com.hyperalive.aod", "com.hyperalive.aod.QihangHomeWallpaper",
-                        "", true, 1302, "com.hyperalive.aod", "com.hyperalive.aod.QihangWallpaper"));
+                "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangHomeWallpaper",
+                "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangWallpaper",
+                makeXml(1301, "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangHomeWallpaper",
+                        "", true, 1302, "io.github.askt_clot.hyperalive", "io.github.askt_clot.hyperalive.QihangWallpaper"));
         check("dual slot verification accepts matching dual slots", dualOk.ok);
 
         runDraftAndRollbackAndDiagTests();
@@ -3522,12 +3522,12 @@ public final class Phase2RegressionBridge {
         check("runProcessWithDeadline completes normal process",
                 fastOut != null && !fastOut.startsWith("ERR "));
 
-        Process pHang = new ProcessBuilder(javaExe, "-cp", cp, "com.hyperalive.aod.Phase2RegressionBridge").redirectErrorStream(true).start();
+        Process pHang = new ProcessBuilder(javaExe, "-cp", cp, "io.github.askt_clot.hyperalive.Phase2RegressionBridge").redirectErrorStream(true).start();
         String hangOut = Root.runProcessWithDeadline(pHang, 150L, false);
         check("runProcessWithDeadline returns explicit ERR timeout on hung process",
                 hangOut != null && hangOut.startsWith("ERR timeout after "));
 
-        Process pHangRaw = new ProcessBuilder(javaExe, "-cp", cp, "com.hyperalive.aod.Phase2RegressionBridge").redirectErrorStream(true).start();
+        Process pHangRaw = new ProcessBuilder(javaExe, "-cp", cp, "io.github.askt_clot.hyperalive.Phase2RegressionBridge").redirectErrorStream(true).start();
         String hangRawOut = Root.runProcessWithDeadline(pHangRaw, 150L, true);
         check("runProcessWithDeadline returns explicit suRaw timeout on hung process in rawMode",
                 hangRawOut != null && hangRawOut.startsWith("suRaw 失败: timeout after "));
@@ -3557,7 +3557,7 @@ public final class Phase2RegressionBridge {
         Thread waiter = new Thread(() -> {
             Process pInt = null;
             try {
-                pInt = new ProcessBuilder(javaExe, "-cp", cp, "com.hyperalive.aod.Phase2RegressionBridge").redirectErrorStream(true).start();
+                pInt = new ProcessBuilder(javaExe, "-cp", cp, "io.github.askt_clot.hyperalive.Phase2RegressionBridge").redirectErrorStream(true).start();
                 Thread.currentThread().interrupt();
                 Root.runProcessWithDeadline(pInt, 5000L, false);
             } catch (InterruptedException ie) {
@@ -3660,44 +3660,44 @@ public final class Phase2RegressionBridge {
                         && mfCloseRace.cacheSizeForTest() == 0);
 
         // 11g. StateCoordinator TTL expiry -> fail-open -> same-owner refresh recovery & Power queue epoch validation
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot prevOwnedSnap =
-                new com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot(true, true, true, 5L, 1000L);
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipDetail sameOwnerDetail =
-                new com.hyperalive.aod.hook.StateCoordinator.OwnershipDetail(true, true);
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot prevOwnedSnap =
+                new io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot(true, true, true, 5L, 1000L);
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipDetail sameOwnerDetail =
+                new io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipDetail(true, true);
         check("within TTL (t=8500ms < 11000ms), same-owner refresh does not trigger redundant lock recovery",
-                !com.hyperalive.aod.hook.StateCoordinator.didSlotOwnershipRecover(
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.didSlotOwnershipRecover(
                         prevOwnedSnap, 8500L, 10000L, 5L,
-                        com.hyperalive.aod.hook.StateCoordinator.SLOT_LOCK, sameOwnerDetail));
+                        io.github.askt_clot.hyperalive.hook.StateCoordinator.SLOT_LOCK, sameOwnerDetail));
         check("after TTL expiry (t=11005ms >= 11000ms) where fast path failed open, same-owner refresh triggers lock recovery",
-                com.hyperalive.aod.hook.StateCoordinator.didSlotOwnershipRecover(
+                io.github.askt_clot.hyperalive.hook.StateCoordinator.didSlotOwnershipRecover(
                         prevOwnedSnap, 11005L, 10000L, 5L,
-                        com.hyperalive.aod.hook.StateCoordinator.SLOT_LOCK, sameOwnerDetail));
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot refreshedSnap =
-                new com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot(true, true, true, 5L, 11005L);
+                        io.github.askt_clot.hyperalive.hook.StateCoordinator.SLOT_LOCK, sameOwnerDetail));
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot refreshedSnap =
+                new io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot(true, true, true, 5L, 11005L);
         check("main-thread recovery check succeeds when epoch matches and refreshed snapshot is active",
-                com.hyperalive.aod.hook.StateCoordinator.shouldApplyRecoveredLockState(
+                io.github.askt_clot.hyperalive.hook.StateCoordinator.shouldApplyRecoveredLockState(
                         refreshedSnap, 11020L, 10000L, 5L, 5L));
         check("main-thread recovery check aborts if ownership epoch bumped during refresh/post",
-                !com.hyperalive.aod.hook.StateCoordinator.shouldApplyRecoveredLockState(
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.shouldApplyRecoveredLockState(
                         refreshedSnap, 11020L, 10000L, 6L, 5L));
 
-        com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot prevHomeOnlySnap =
-                new com.hyperalive.aod.hook.StateCoordinator.OwnershipSnapshot(true, true, false, 5L, 5000L);
+        io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot prevHomeOnlySnap =
+                new io.github.askt_clot.hyperalive.hook.StateCoordinator.OwnershipSnapshot(true, true, false, 5L, 5000L);
         check("when homeOwned stays true and lockOwned transitions false->true within TTL, only lockRecovered is true",
-                !com.hyperalive.aod.hook.StateCoordinator.didSlotOwnershipRecover(
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.didSlotOwnershipRecover(
                         prevHomeOnlySnap, 7000L, 10000L, 5L,
-                        com.hyperalive.aod.hook.StateCoordinator.SLOT_HOME, sameOwnerDetail)
-                        && com.hyperalive.aod.hook.StateCoordinator.didSlotOwnershipRecover(
+                        io.github.askt_clot.hyperalive.hook.StateCoordinator.SLOT_HOME, sameOwnerDetail)
+                        && io.github.askt_clot.hyperalive.hook.StateCoordinator.didSlotOwnershipRecover(
                                 prevHomeOnlySnap, 7000L, 10000L, 5L,
-                                com.hyperalive.aod.hook.StateCoordinator.SLOT_LOCK, sameOwnerDetail));
+                                io.github.askt_clot.hyperalive.hook.StateCoordinator.SLOT_LOCK, sameOwnerDetail));
 
         check("Power queue task is valid when generation, epoch, and lock ownership match",
-                com.hyperalive.aod.hook.StateCoordinator.isPowerTaskStillValid(
+                io.github.askt_clot.hyperalive.hook.StateCoordinator.isPowerTaskStillValid(
                         12L, 12L, 5L, 5L, refreshedSnap, 11500L, 10000L));
         check("Power queue task is invalidated immediately when ownerEpoch changes or TTL expires",
-                !com.hyperalive.aod.hook.StateCoordinator.isPowerTaskStillValid(
+                !io.github.askt_clot.hyperalive.hook.StateCoordinator.isPowerTaskStillValid(
                         12L, 12L, 5L, 6L, refreshedSnap, 11500L, 10000L)
-                        && !com.hyperalive.aod.hook.StateCoordinator.isPowerTaskStillValid(
+                        && !io.github.askt_clot.hyperalive.hook.StateCoordinator.isPowerTaskStillValid(
                                 12L, 12L, 5L, 5L, refreshedSnap, 22000L, 10000L));
 
         // 11h. MainActivity.StatusProbeCoordinator single-in-flight coalescing & lifecycle cancellation
@@ -3870,7 +3870,7 @@ public final class Phase2RegressionBridge {
 
         // 11j. Bug 2 regression: LspState.queryLspState(nonNullCtx, false) & evaluateLspState tri-state checks
         String activeDbOut = "enabled=1 "
-                + "scope=system,com.android.systemui,miui.systemui.plugin,com.miui.aod,com.android.thememanager,com.hyperalive.aod\n";
+                + "scope=system,com.android.systemui,miui.systemui.plugin,com.miui.aod,com.android.thememanager,io.github.askt_clot.hyperalive\n";
         android.content.Context bugCtx = new android.content.Context(null);
         check("LspState.queryLspState(nonNullCtx, false) returns UNKNOWN directly without relying on sticky markers",
                 LspState.queryLspState(bugCtx, false) == LspState.State.UNKNOWN
@@ -3880,10 +3880,10 @@ public final class Phase2RegressionBridge {
         check("LspState.evaluateLspState returns ENABLED when root is granted, DB enabled, core scopes & lspd present",
                 LspState.evaluateLspState(true, activeDbOut, "1") == LspState.State.ENABLED);
         check("LspState.evaluateLspState returns DISABLED when root is granted and DB disabled",
-                LspState.evaluateLspState(true, "enabled=0 scope=system,com.android.systemui,com.miui.aod,com.hyperalive.aod\n", "1")
+                LspState.evaluateLspState(true, "enabled=0 scope=system,com.android.systemui,com.miui.aod,io.github.askt_clot.hyperalive\n", "1")
                         == LspState.State.DISABLED);
         check("LspState.evaluateLspState returns UNKNOWN when core scope missing",
-                LspState.evaluateLspState(true, "enabled=1 scope=system,com.hyperalive.aod\n", "1")
+                LspState.evaluateLspState(true, "enabled=1 scope=system,io.github.askt_clot.hyperalive\n", "1")
                         == LspState.State.UNKNOWN);
         check("MainActivity tri-state LSP label formatting & status OK flag match state",
                 "LSP 已激活".equals(MainActivity.formatLspStatusLabel(LspState.State.ENABLED))
@@ -4005,24 +4005,24 @@ public final class Phase2RegressionBridge {
         final boolean[] homeOwned = {true};
         final boolean[] allowLegacyVep5 = {false};
 
-        final com.hyperalive.aod.hook.WallpaperPreviewHook.PreviewReader previewReader =
-                new com.hyperalive.aod.hook.WallpaperPreviewHook.PreviewReader() {
+        final io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.PreviewReader previewReader =
+                new io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.PreviewReader() {
                     @Override
                     public android.graphics.Bitmap read(android.content.Context c, String slot) {
                         if ("home".equals(slot)) return homeOwned[0] ? previewHomeBmp : null;
                         return lockOwned[0] ? previewLockBmp : null;
                     }
                 };
-        final com.hyperalive.aod.hook.WallpaperPreviewHook.PreviewReader fullResReader =
-                new com.hyperalive.aod.hook.WallpaperPreviewHook.PreviewReader() {
+        final io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.PreviewReader fullResReader =
+                new io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.PreviewReader() {
                     @Override
                     public android.graphics.Bitmap read(android.content.Context c, String slot) {
                         if ("home".equals(slot)) return homeOwned[0] ? fullHomeBmp : null;
                         return lockOwned[0] ? fullLockBmp : null;
                     }
                 };
-        final com.hyperalive.aod.hook.WallpaperPreviewHook.OwnershipChecker ownershipChecker =
-                new com.hyperalive.aod.hook.WallpaperPreviewHook.OwnershipChecker() {
+        final io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.OwnershipChecker ownershipChecker =
+                new io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.OwnershipChecker() {
                     @Override
                     public boolean isOwned(android.content.Context c, String slot) {
                         return "home".equals(slot) ? homeOwned[0] : lockOwned[0];
@@ -4034,8 +4034,8 @@ public final class Phase2RegressionBridge {
         final java.util.Map<String, de.robv.android.xposed.XC_MethodHook> aodHooks =
                 new java.util.HashMap<String, de.robv.android.xposed.XC_MethodHook>();
 
-        com.hyperalive.aod.hook.WallpaperPreviewHook.HookRegistrar tmRegistrar =
-                new com.hyperalive.aod.hook.WallpaperPreviewHook.HookRegistrar() {
+        io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.HookRegistrar tmRegistrar =
+                new io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.HookRegistrar() {
                     @Override
                     public boolean hookExact(
                             Class<?> clazz, String methodName, de.robv.android.xposed.XC_MethodHook hook, Class<?>... paramTypes) {
@@ -4051,8 +4051,8 @@ public final class Phase2RegressionBridge {
                         }
                     }
                 };
-        com.hyperalive.aod.hook.WallpaperPreviewHook.HookRegistrar aodRegistrar =
-                new com.hyperalive.aod.hook.WallpaperPreviewHook.HookRegistrar() {
+        io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.HookRegistrar aodRegistrar =
+                new io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.HookRegistrar() {
                     @Override
                     public boolean hookExact(
                             Class<?> clazz, String methodName, de.robv.android.xposed.XC_MethodHook hook, Class<?>... paramTypes) {
@@ -4069,9 +4069,9 @@ public final class Phase2RegressionBridge {
         ClassLoader cl = Phase2RegressionBridge.class.getClassLoader();
         // Notice BaseTemplateView declares optionalMiuiPlayer(com.optional.missing.BrokenPlayerDep) whose .class is deleted!
         // Any getDeclaredMethods()/getMethods() call inside WallpaperPreviewHook would throw NoClassDefFoundError here!
-        com.hyperalive.aod.hook.WallpaperPreviewHook.installThemeManager(
+        io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.installThemeManager(
                 cl, tmRegistrar, previewReader, ownershipChecker);
-        com.hyperalive.aod.hook.WallpaperPreviewHook.installAod(
+        io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.installAod(
                 cl, aodRegistrar, previewReader, fullResReader, ownershipChecker);
         com.miui.keyguard.editor.data.template.TemplateApiImpl.ACTIVE_HOOKS = aodHooks;
 
@@ -4218,7 +4218,7 @@ public final class Phase2RegressionBridge {
                 new com.miui.keyguard.editor.data.bean.CommonConfig(
                         true, null, null, null, "LOCK_WALLPAPER",
                         true, null, null, null, "HOME_WALLPAPER");
-        int mixedPrepped = com.hyperalive.aod.hook.WallpaperPreviewHook.prepareCommonConfigForNativeApply(
+        int mixedPrepped = io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.prepareCommonConfigForNativeApply(
                 ctx, mixedCfg, false, fullResReader, ownershipChecker, cl);
         check("Mixed slot ownership prepares ONLY owned Lock full-res & PositionInfo and leaves unowned Home untouched",
                 mixedPrepped == 1
@@ -4233,7 +4233,7 @@ public final class Phase2RegressionBridge {
                         previewLockBmp, null, null, "LOCK_WALLPAPER", true);
         com.miui.keyguard.editor.data.bean.TemplateConfig lockSlot =
                 new com.miui.keyguard.editor.data.bean.TemplateConfig(true, droppingPosInfo);
-        boolean prepOkOnBrokenSetter = com.hyperalive.aod.hook.WallpaperPreviewHook.prepareSlotForNativeApply(
+        boolean prepOkOnBrokenSetter = io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.prepareSlotForNativeApply(
                 ctx, lockSlot, droppingPosInfo, "lock", fullResReader, ownershipChecker, cl);
         check("Setter/readback failure aborts conservatively, rolls back currentWallpaper/resourceType, and never clears isThirdPartyWallpaper",
                 !prepOkOnBrokenSetter
@@ -4315,7 +4315,7 @@ public final class Phase2RegressionBridge {
         // Scenario H: System Personalization gray card (isThirdPartyWallpaper=false + non-null stale static/gray Bitmap + fresh module ownership)
         // Re-install ThemeManager hook with allowLegacyVep5=true to exercise the obfuscated vep5 binding path as seen on device!
         allowLegacyVep5[0] = true;
-        com.hyperalive.aod.hook.WallpaperPreviewHook.installThemeManager(
+        io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.installThemeManager(
                 ctx.getClass().getClassLoader(), tmRegistrar, previewReader, ownershipChecker);
         lockOwned[0] = true;
         homeOwned[0] = true;
@@ -4399,7 +4399,7 @@ public final class Phase2RegressionBridge {
                 new com.miui.keyguard.editor.data.bean.CommonConfig(
                         false, grayStaticBmp, null, null, "LOCK_WALLPAPER",
                         false, grayStaticBmp, null, null, "HOME_WALLPAPER");
-        int errUpdated = com.hyperalive.aod.hook.WallpaperPreviewHook.applyDisplayPreviewToCommonConfig(
+        int errUpdated = io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.applyDisplayPreviewToCommonConfig(
                 ctx,
                 errOwnershipCfg,
                 (c, slot) -> "lock".equals(slot) ? previewLockBmp : previewHomeBmp,
@@ -4755,7 +4755,7 @@ public final class Phase2RegressionBridge {
             try {
                 de.robv.android.xposed.XC_MethodHook.invokeBefore(withCfgHook, staleScope);
                 // Newer generation supersedes cfgSuperseded while old request is in-flight
-                com.hyperalive.aod.hook.WallpaperPreviewHook.recordApplyIntent(cfgSuperseded, false);
+                io.github.askt_clot.hyperalive.hook.WallpaperPreviewHook.recordApplyIntent(cfgSuperseded, false);
                 apiSuperseded.applyImageWallpaper(
                         nativeLockBmp, true, "lock_path", cfgSuperseded.getLockscreenInfo().getWallpaperInfo(),
                         false, true, false, null, new kotlin.Pair<Integer, Integer>(1080, 2400),
@@ -5787,7 +5787,7 @@ public class ImageDecoder {
 
         harness_map = {
             "WallpaperBackupRegression.java": HARNESS,
-            "com/hyperalive/aod/Phase2RegressionBridge.java": HARNESS_PHASE2_BRIDGE,
+            "io/github/askt_clot/hyperalive/Phase2RegressionBridge.java": HARNESS_PHASE2_BRIDGE,
         }
         harness_map.update(HARNESS_MIUI_HOSTS)
         harness_files = write_sources(harness_src, harness_map)
@@ -5896,13 +5896,13 @@ public interface IXposedHookLoadPackage {
         ] + [str(f) for f in lsp_shim_files], check=True)
 
         lsp_harness_files = write_sources(lsp_harness_src, {
-            "com/hyperalive/aod/LspLogBridgeRegression.java": r"""
-package com.hyperalive.aod;
+            "io/github/askt_clot/hyperalive/LspLogBridgeRegression.java": r"""
+package io.github.askt_clot.hyperalive;
 
 import android.content.Context;
 import android.util.Log;
 
-import com.hyperalive.aod.hook.HookUtils;
+import io.github.askt_clot.hyperalive.hook.HookUtils;
 
 import java.io.File;
 import java.lang.reflect.Member;
@@ -6053,7 +6053,7 @@ public final class LspLogBridgeRegression {
         ] + [str(f) for f in lsp_harness_files], check=True)
         subprocess.run([
             java, "-cp", os.pathsep.join([str(lsp_harness_cls), str(lsp_shim_cls), str(shim_cls), str(app_cls), str(android_jar)]),
-            "com.hyperalive.aod.LspLogBridgeRegression", str(lsp_data),
+            "io.github.askt_clot.hyperalive.LspLogBridgeRegression", str(lsp_data),
         ], check=True)
 
         # No-framework fallback regression: strip all de.robv.android.xposed.* classes from runtime classpath
@@ -6072,13 +6072,13 @@ public final class LspLogBridgeRegression {
             shutil.copy2(cls_file, dst_cls)
 
         no_fw_harness_files = write_sources(no_fw_harness_src, {
-            "com/hyperalive/aod/NoFrameworkFallbackRegression.java": r"""
-package com.hyperalive.aod;
+            "io/github/askt_clot/hyperalive/NoFrameworkFallbackRegression.java": r"""
+package io.github.askt_clot.hyperalive;
 
 import android.content.Context;
 import android.util.Log;
 
-import com.hyperalive.aod.hook.HookUtils;
+import io.github.askt_clot.hyperalive.hook.HookUtils;
 
 import java.io.File;
 import java.util.List;
@@ -6138,7 +6138,7 @@ public final class NoFrameworkFallbackRegression {
         ] + [str(f) for f in no_fw_harness_files], check=True)
         subprocess.run([
             java, "-cp", os.pathsep.join([str(no_fw_harness_cls), str(no_fw_shim_cls), str(app_cls), str(android_jar)]),
-            "com.hyperalive.aod.NoFrameworkFallbackRegression", str(no_fw_data),
+            "io.github.askt_clot.hyperalive.NoFrameworkFallbackRegression", str(no_fw_data),
         ], check=True)
 
     verify_bridge_probe_contracts()
@@ -6151,7 +6151,7 @@ public final class NoFrameworkFallbackRegression {
 
 
 def verify_bridge_probe_contracts() -> None:
-    bridge = (APP_JAVA / "com/hyperalive/aod/root/HyperOsWallpaperBridge.java").read_text(encoding="utf-8")
+    bridge = (APP_JAVA / "io/github/askt_clot/hyperalive/root/HyperOsWallpaperBridge.java").read_text(encoding="utf-8")
     path_block = bridge[bridge.index('aidlCallJson(service, "getMiuiWallpaperPath"'):]
     path_block = path_block[:path_block.index(";")]
     assert '"", which, false, false' in path_block, "getMiuiWallpaperPath must pass empty type string"
@@ -6162,10 +6162,10 @@ def verify_bridge_probe_contracts() -> None:
 
 
 def verify_mount_master_contracts() -> None:
-    root_java = (APP_JAVA / "com/hyperalive/aod/Root.java").read_text(encoding="utf-8")
+    root_java = (APP_JAVA / "io/github/askt_clot/hyperalive/Root.java").read_text(encoding="utf-8")
     for tok in ("supportsMountMaster()", "suMountMaster(", "suRawMountMaster(", '"-M"'):
         assert tok in root_java, f"Missing mount-master support token in Root.java: {tok}"
-    backup_java = (APP_JAVA / "com/hyperalive/aod/PreModuleWallpaperBackup.java").read_text(encoding="utf-8")
+    backup_java = (APP_JAVA / "io/github/askt_clot/hyperalive/PreModuleWallpaperBackup.java").read_text(encoding="utf-8")
     for tok in ("Root.suMountMaster(", "Root.suRawMountMaster("):
         assert tok in backup_java, f"Missing mount-master usage in PreModuleWallpaperBackup.java: {tok}"
     gateway_block = backup_java[backup_java.index("private static HyperOsWallpaperHelper.Gateway createRootGateway("):]
@@ -6180,7 +6180,7 @@ def verify_mount_master_contracts() -> None:
 
 
 def verify_lsp_fallback_removed() -> None:
-    lsp_java = (APP_JAVA / "com/hyperalive/aod/LspState.java").read_text(encoding="utf-8")
+    lsp_java = (APP_JAVA / "io/github/askt_clot/hyperalive/LspState.java").read_text(encoding="utf-8")
     for forbidden in (
         "restoreLockDefaultWallpaper",
         "checkFallbackIfInactive",
@@ -6190,16 +6190,16 @@ def verify_lsp_fallback_removed() -> None:
         ".clear(",
     ):
         assert forbidden not in lsp_java, f"LspState must not contain legacy fallback/unused token: {forbidden}"
-    for rel in ("com/hyperalive/aod/MainActivity.java", "com/hyperalive/aod/QihangWallpaper.java"):
+    for rel in ("io/github/askt_clot/hyperalive/MainActivity.java", "io/github/askt_clot/hyperalive/QihangWallpaper.java"):
         src = (APP_JAVA / rel).read_text(encoding="utf-8")
         assert "checkFallbackIfInactive" not in src, f"{rel} must not call checkFallbackIfInactive"
-    root_java = (APP_JAVA / "com/hyperalive/aod/Root.java").read_text(encoding="utf-8")
+    root_java = (APP_JAVA / "io/github/askt_clot/hyperalive/Root.java").read_text(encoding="utf-8")
     assert "restoreDefaultWallpaper(" not in root_java, "Dead Root.restoreDefaultWallpaper API must be removed"
     print("LspState & Root dead fallback removal contract: 9 assertions passed")
 
 
 def verify_hook_ownership_gates() -> None:
-    hook_dir = APP_JAVA / "com/hyperalive/aod/hook"
+    hook_dir = APP_JAVA / "io/github/askt_clot/hyperalive/hook"
     sc = (hook_dir / "StateCoordinator.java").read_text(encoding="utf-8")
     for tok in (
         "isHyperAliveWallpaperActiveFast(",
@@ -6267,7 +6267,7 @@ def verify_hook_ownership_gates() -> None:
 
 
 def verify_split_restore_contracts() -> None:
-    bridge = (APP_JAVA / "com/hyperalive/aod/root/HyperOsWallpaperBridge.java").read_text(encoding="utf-8")
+    bridge = (APP_JAVA / "io/github/askt_clot/hyperalive/root/HyperOsWallpaperBridge.java").read_text(encoding="utf-8")
     for tok in (
         "INVALID_SPLIT_LOCK_COMP",
         "UNSAFE_SPLIT_SAME_LAYER_BLACK_SCREEN",
@@ -6282,7 +6282,7 @@ def verify_split_restore_contracts() -> None:
     assert bridge.index("UNSAFE_SPLIT_SAME_LAYER_BLACK_SCREEN") < bridge.index("clearLiveWallpaperViaWms("), \
         "Bridge must reject unsafe split sameLayer spec BEFORE clearLiveWallpaperViaWms"
 
-    sc = (APP_JAVA / "com/hyperalive/aod/hook/StateCoordinator.java").read_text(encoding="utf-8")
+    sc = (APP_JAVA / "io/github/askt_clot/hyperalive/hook/StateCoordinator.java").read_text(encoding="utf-8")
     for tok in (
         "WALLPAPER_OWNED_PREREFRESH_MS = 7000L",
         "shouldScheduleOwnershipPreRefresh(",
@@ -6290,7 +6290,7 @@ def verify_split_restore_contracts() -> None:
     ):
         assert tok in sc, f"Missing StateCoordinator pre-refresh token: {tok}"
 
-    backup = (APP_JAVA / "com/hyperalive/aod/PreModuleWallpaperBackup.java").read_text(encoding="utf-8")
+    backup = (APP_JAVA / "io/github/askt_clot/hyperalive/PreModuleWallpaperBackup.java").read_text(encoding="utf-8")
     oem_cls_block = backup[backup.index("if (oemRes.mode == HyperOsWallpaperHelper.Mode.OEM_CUSTOM_IMAGE)"):]
     oem_cls_block = oem_cls_block[:oem_cls_block.index("if (isConfirmedDefaultState(")]
     assert "PLAIN_STATIC" not in oem_cls_block, "OEM_CUSTOM_IMAGE diverged split must ABORT, never downgrade to PLAIN_STATIC"
@@ -6299,32 +6299,32 @@ def verify_split_restore_contracts() -> None:
 
 
 def verify_rewrite_cleanup_contracts() -> None:
-    assert not (APP_JAVA / "com/hyperalive/aod/NotificationActivity.java").exists(), "NotificationActivity.java must be removed"
+    assert not (APP_JAVA / "io/github/askt_clot/hyperalive/NotificationActivity.java").exists(), "NotificationActivity.java must be removed"
     assert not (RES_DIR / "drawable/ic_texture.xml").exists(), "ic_texture.xml must be removed"
     assert not (RES_DIR / "drawable/ic_effect.xml").exists(), "ic_effect.xml must be removed"
     manifest_txt = MANIFEST.read_text(encoding="utf-8")
     assert "NotificationActivity" not in manifest_txt, "AndroidManifest.xml must not register NotificationActivity"
-    assert (APP_JAVA / "com/hyperalive/aod/DirectBootContext.java").is_file(), "DirectBootContext.java must exist"
+    assert (APP_JAVA / "io/github/askt_clot/hyperalive/DirectBootContext.java").is_file(), "DirectBootContext.java must exist"
     for rel in ("PhotoStore.java", "LastSet.java", "ClockSettings.java", "AodStyleSettings.java"):
-        src = (APP_JAVA / "com/hyperalive/aod" / rel).read_text(encoding="utf-8")
+        src = (APP_JAVA / "io/github/askt_clot/hyperalive" / rel).read_text(encoding="utf-8")
         assert "DirectBootContext.get(" in src, f"{rel} must delegate to DirectBootContext.get"
-    sc = (APP_JAVA / "com/hyperalive/aod/hook/StateCoordinator.java").read_text(encoding="utf-8")
+    sc = (APP_JAVA / "io/github/askt_clot/hyperalive/hook/StateCoordinator.java").read_text(encoding="utf-8")
     for tok in ("sPowerAsync", "sOwnerAsync", "homeRecovered", "lockRecovered"):
         assert tok in sc, f"StateCoordinator must contain rewrite improvement token: {tok}"
 
-    lr = (APP_JAVA / "com/hyperalive/aod/LensRenderer.java").read_text(encoding="utf-8")
+    lr = (APP_JAVA / "io/github/askt_clot/hyperalive/LensRenderer.java").read_text(encoding="utf-8")
     lr_set_block = lr[lr.index("void setAodStyle(int style)"):lr.index("private void syncRequestedAodStyleOnGlThread()")]
     assert "updateCachedStyle(" not in lr_set_block, "LensRenderer.setAodStyle must NOT mutate AodStyleSettings cache"
     assert "syncRequestedAodStyleOnGlThread(" in lr, "LensRenderer must sync requestedAodStyle on GL thread"
-    ma = (APP_JAVA / "com/hyperalive/aod/MainActivity.java").read_text(encoding="utf-8")
+    ma = (APP_JAVA / "io/github/askt_clot/hyperalive/MainActivity.java").read_text(encoding="utf-8")
     on_resume = ma[ma.index("protected void onResume()"):ma.index("protected void onPause()")]
     assert on_resume.index("syncClockPreview()") < on_resume.index("startScene()"), "MainActivity.onResume must syncClockPreview before startScene"
     assert "setCommittedAodStyle(" in ma, "MainActivity.syncClockPreview must call setCommittedAodStyle"
-    lpv = (APP_JAVA / "com/hyperalive/aod/LivePreviewView.java").read_text(encoding="utf-8")
+    lpv = (APP_JAVA / "io/github/askt_clot/hyperalive/LivePreviewView.java").read_text(encoding="utf-8")
     assert "void setCommittedAodStyle(" in lpv, "LivePreviewView must expose setCommittedAodStyle"
     assert "void setDraftSessionId(" in lpv, "LivePreviewView must support draft session isolation"
     assert "previewFramePhoto" in lr and "PhotoDraftStore.loadSource(" in lr, "LensRenderer preview must load 3-slot draft/fallback sources"
-    ed = (APP_JAVA / "com/hyperalive/aod/EditorActivity.java").read_text(encoding="utf-8")
+    ed = (APP_JAVA / "io/github/askt_clot/hyperalive/EditorActivity.java").read_text(encoding="utf-8")
     for forbidden in (
         "PhotoStore.stageFromUri(",
         "PhotoStore.stageExistingOrFallback(",
@@ -6349,24 +6349,24 @@ def verify_rewrite_cleanup_contracts() -> None:
         "EditorActivity.onCreate must not run blocking recovery synchronously on UI thread"
     manifest_txt = MANIFEST.read_text(encoding="utf-8")
     assert 'android:name=".QihangApp"' in manifest_txt, "AndroidManifest must register QihangApp"
-    qihang_app = (APP_JAVA / "com/hyperalive/aod/QihangApp.java").read_text(encoding="utf-8")
+    qihang_app = (APP_JAVA / "io/github/askt_clot/hyperalive/QihangApp.java").read_text(encoding="utf-8")
     assert "PhotoDraftStore.triggerStartupRecoveryAsync(" in qihang_app, \
         "QihangApp must trigger asynchronous startup recovery"
     for entry_rel in (
-        "com/hyperalive/aod/MainActivity.java",
-        "com/hyperalive/aod/WallpaperPreviewProvider.java",
-        "com/hyperalive/aod/ClockConfigProvider.java",
-        "com/hyperalive/aod/QihangWallpaper.java",
+        "io/github/askt_clot/hyperalive/MainActivity.java",
+        "io/github/askt_clot/hyperalive/WallpaperPreviewProvider.java",
+        "io/github/askt_clot/hyperalive/ClockConfigProvider.java",
+        "io/github/askt_clot/hyperalive/QihangWallpaper.java",
     ):
         entry_src = (APP_JAVA / entry_rel).read_text(encoding="utf-8")
         assert "PhotoDraftStore.triggerStartupRecoveryAsync(" in entry_src, \
             f"{entry_rel} must trigger startup recovery at process/component entry"
     assert '"日志"' in ma and "showDiagLogDialog()" in ma and "resolveDiagSubtitleText(" in ma, \
         "MainActivity menu must include diagnostic log viewer with collection-status subtitle"
-    mdl = (APP_JAVA / "com/hyperalive/aod/ModuleDiagLog.java").read_text(encoding="utf-8")
+    mdl = (APP_JAVA / "io/github/askt_clot/hyperalive/ModuleDiagLog.java").read_text(encoding="utf-8")
     assert "-t 250" not in mdl and "buildHookLogcatCommand(" in mdl and "hookCollectionOk" in mdl, \
         "ModuleDiagLog must tail after tag filter with pipeline RC & expose hookCollectionOk"
-    pds = (APP_JAVA / "com/hyperalive/aod/PhotoDraftStore.java").read_text(encoding="utf-8")
+    pds = (APP_JAVA / "io/github/askt_clot/hyperalive/PhotoDraftStore.java").read_text(encoding="utf-8")
     assert "hasCorruptRevision(" in pds and "CORRUPT_REVISION_PREFIX" in pds and "completeTransactionSnapshot(Context ctx, CommitSnapshot snapshot) throws IOException" in pds, \
         "PhotoDraftStore must enforce durable COMMITTED writes and corrupt revision locking"
 
@@ -6403,56 +6403,56 @@ def verify_rewrite_cleanup_contracts() -> None:
 def verify_rename_and_lsp_log_contracts() -> None:
     assert not (APP_JAVA / "com/qihang").exists(), "Legacy com/qihang source tree must be removed"
     manifest = MANIFEST.read_text(encoding="utf-8")
-    assert 'package="com.hyperalive.aod"' in manifest, "Manifest package must be com.hyperalive.aod"
+    assert 'package="io.github.askt_clot.hyperalive"' in manifest, "Manifest package must be io.github.askt_clot.hyperalive"
     assert "com.qihang.aod" not in manifest, "Manifest must not contain com.qihang.aod"
     assert 'android:name=".QihangApp"' in manifest
     assert 'android:name=".QihangWallpaper"' in manifest
     assert 'android:name=".QihangHomeWallpaper"' in manifest
-    assert 'android:authorities="com.hyperalive.aod.clockconfig"' in manifest
-    assert 'android:authorities="com.hyperalive.aod.wallpaperpreview"' in manifest
+    assert 'android:authorities="io.github.askt_clot.hyperalive.clockconfig"' in manifest
+    assert 'android:authorities="io.github.askt_clot.hyperalive.wallpaperpreview"' in manifest
 
     arrays = (RES_DIR / "values/arrays.xml").read_text(encoding="utf-8")
-    assert "<item>com.hyperalive.aod</item>" in arrays and "com.qihang.aod" not in arrays, \
-        "xposedscope in arrays.xml must list com.hyperalive.aod instead of com.qihang.aod"
+    assert "<item>io.github.askt_clot.hyperalive</item>" in arrays and "com.qihang.aod" not in arrays, \
+        "xposedscope in arrays.xml must list io.github.askt_clot.hyperalive instead of com.qihang.aod"
 
     gradle = (ROOT / "app/build.gradle").read_text(encoding="utf-8")
-    assert "namespace 'com.hyperalive.aod'" in gradle and 'applicationId "com.hyperalive.aod"' in gradle, \
-        "app/build.gradle namespace and applicationId must be com.hyperalive.aod"
+    assert "namespace 'io.github.askt_clot.hyperalive'" in gradle and 'applicationId "io.github.askt_clot.hyperalive"' in gradle, \
+        "app/build.gradle namespace and applicationId must be io.github.askt_clot.hyperalive"
 
     proguard = (ROOT / "app/proguard-rules.pro").read_text(encoding="utf-8")
-    assert "-keep class com.hyperalive.aod.XposedInit { *; }" in proguard \
-        and "-keep class com.hyperalive.aod.** { *; }" in proguard \
-        and "com.qihang.aod" not in proguard, "proguard-rules.pro must reference com.hyperalive.aod"
+    assert "-keep class io.github.askt_clot.hyperalive.XposedInit { *; }" in proguard \
+        and "-keep class io.github.askt_clot.hyperalive.** { *; }" in proguard \
+        and "com.qihang.aod" not in proguard, "proguard-rules.pro must reference io.github.askt_clot.hyperalive"
 
     build_py = (ROOT / "build.py").read_text(encoding="utf-8")
-    assert "INIT_CLASS = 'com.hyperalive.aod.XposedInit'" in build_py and "com.qihang.aod" not in build_py, \
-        "build.py INIT_CLASS must emit com.hyperalive.aod.XposedInit"
+    assert "INIT_CLASS = 'io.github.askt_clot.hyperalive.XposedInit'" in build_py and "com.qihang.aod" not in build_py, \
+        "build.py INIT_CLASS must emit io.github.askt_clot.hyperalive.XposedInit"
 
-    hook_utils = (APP_JAVA / "com/hyperalive/aod/hook/HookUtils.java").read_text(encoding="utf-8")
-    assert 'PKG_SELF = "com.hyperalive.aod"' in hook_utils
+    hook_utils = (APP_JAVA / "io/github/askt_clot/hyperalive/hook/HookUtils.java").read_text(encoding="utf-8")
+    assert 'PKG_SELF = "io.github.askt_clot.hyperalive"' in hook_utils
     assert "XposedLogSink" in hook_utils and "logXposedOnly(" in hook_utils and "sInXposedLog" in hook_utils, \
         "HookUtils must isolate XposedBridge calls and guard recursion"
 
-    xposed_init = (APP_JAVA / "com/hyperalive/aod/XposedInit.java").read_text(encoding="utf-8")
+    xposed_init = (APP_JAVA / "io/github/askt_clot/hyperalive/XposedInit.java").read_text(encoding="utf-8")
     assert "forwardToLsposedBridge" in xposed_init and "HookUtils.logXposedOnly(" in xposed_init, \
         "XposedInit.hookSelf must bridge ModuleDiagLog via HookUtils.logXposedOnly"
 
-    mdl = (APP_JAVA / "com/hyperalive/aod/ModuleDiagLog.java").read_text(encoding="utf-8")
+    mdl = (APP_JAVA / "io/github/askt_clot/hyperalive/ModuleDiagLog.java").read_text(encoding="utf-8")
     assert "IN_BRIDGE_EMIT" in mdl and "static void forwardToLsposedBridge(String cleanedEntry)" in mdl, \
         "ModuleDiagLog must expose guarded forwardToLsposedBridge outside lock"
 
-    cs = (APP_JAVA / "com/hyperalive/aod/ClockSettings.java").read_text(encoding="utf-8")
-    assert 'PROVIDER_URI = "content://com.hyperalive.aod.clockconfig"' in cs
-    assert 'ACTION_STYLE_CHANGED = "com.hyperalive.aod.CLOCK_STYLE_CHANGED"' in cs
-    wpp = (APP_JAVA / "com/hyperalive/aod/WallpaperPreviewProvider.java").read_text(encoding="utf-8")
-    assert 'AUTHORITY = "com.hyperalive.aod.wallpaperpreview"' in wpp
-    aod_style = (APP_JAVA / "com/hyperalive/aod/AodStyleSettings.java").read_text(encoding="utf-8")
-    assert 'ACTION_STYLE_CHANGED = "com.hyperalive.aod.AOD_STYLE_CHANGED"' in aod_style
-    qw = (APP_JAVA / "com/hyperalive/aod/QihangWallpaper.java").read_text(encoding="utf-8")
-    assert 'ACTION_MODE = "com.hyperalive.aod.CMD"' in qw
-    sc = (APP_JAVA / "com/hyperalive/aod/hook/StateCoordinator.java").read_text(encoding="utf-8")
-    assert 'ACTION_MODE = "com.hyperalive.aod.CMD"' in sc
-    root_java = (APP_JAVA / "com/hyperalive/aod/Root.java").read_text(encoding="utf-8")
+    cs = (APP_JAVA / "io/github/askt_clot/hyperalive/ClockSettings.java").read_text(encoding="utf-8")
+    assert 'PROVIDER_URI = "content://io.github.askt_clot.hyperalive.clockconfig"' in cs
+    assert 'ACTION_STYLE_CHANGED = "io.github.askt_clot.hyperalive.CLOCK_STYLE_CHANGED"' in cs
+    wpp = (APP_JAVA / "io/github/askt_clot/hyperalive/WallpaperPreviewProvider.java").read_text(encoding="utf-8")
+    assert 'AUTHORITY = "io.github.askt_clot.hyperalive.wallpaperpreview"' in wpp
+    aod_style = (APP_JAVA / "io/github/askt_clot/hyperalive/AodStyleSettings.java").read_text(encoding="utf-8")
+    assert 'ACTION_STYLE_CHANGED = "io.github.askt_clot.hyperalive.AOD_STYLE_CHANGED"' in aod_style
+    qw = (APP_JAVA / "io/github/askt_clot/hyperalive/QihangWallpaper.java").read_text(encoding="utf-8")
+    assert 'ACTION_MODE = "io.github.askt_clot.hyperalive.CMD"' in qw
+    sc = (APP_JAVA / "io/github/askt_clot/hyperalive/hook/StateCoordinator.java").read_text(encoding="utf-8")
+    assert 'ACTION_MODE = "io.github.askt_clot.hyperalive.CMD"' in sc
+    root_java = (APP_JAVA / "io/github/askt_clot/hyperalive/Root.java").read_text(encoding="utf-8")
     assert '"hyperalive_aod.dex"' in root_java
     print("Package rename & LSPosed logging contract: 23 assertions passed")
 

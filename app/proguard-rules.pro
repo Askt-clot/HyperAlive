@@ -1,5 +1,5 @@
 # Proguard rules for HyperAlive
--keep class com.hyperalive.aod.XposedInit { *; }
--keep class com.hyperalive.aod.** { *; }
+-keep class io.github.askt_clot.hyperalive.XposedInit { *; }
+-keep class io.github.askt_clot.hyperalive.** { *; }
 -keep class de.robv.android.xposed.** { *; }
 -dontwarn de.robv.android.xposed.**

@@ -29,7 +29,7 @@ def hasReleaseSigning = releaseKeystorePath != null &&
         file(releaseKeystorePath).isFile()
 
 android {
-    namespace 'com.hyperalive.aod'
+    namespace 'io.github.askt_clot.hyperalive'
     compileSdk 35
 
     androidResources {
@@ -37,7 +37,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.hyperalive.aod"
+        applicationId "io.github.askt_clot.hyperalive"
         minSdk 29
         targetSdk 35
         versionCode 20261124
