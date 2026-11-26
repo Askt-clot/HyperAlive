@@ -90,4 +90,4 @@ adb install -r build/HyperAlive-v1.0.5.apk
 
 ## 五、致谢
 
-感谢 **下北沢最速傳說**开源分享。HyperAlive 在照片息屏样式、三态转场和壁纸纹理的实现中参考了[OpenAlive](https://github.com/Maga-King/OpenAlive)。
+感谢 **下北沢最速傳說** 开源分享。HyperAlive 在照片息屏样式、三态转场和壁纸纹理的实现中参考了[OpenAlive](https://github.com/Maga-King/OpenAlive)。
