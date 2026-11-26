@@ -91,3 +91,11 @@ adb install -r build/HyperAlive-v1.0.5.apk
 ## 五、致谢
 
 感谢 **下北沢最速傳說** 开源分享。HyperAlive 在照片息屏样式、三态转场和壁纸纹理的实现中参考了[OpenAlive](https://github.com/Maga-King/OpenAlive)。
+
+---
+
+## 六、资产说明
+
+HyperAlive 有权授权的自实现代码采用 MIT 许可。移植自 OpenAlive 的代码保留上游的版权声明与 MIT 许可。 [MIT 许可证](LICENSE)
+
+**部分资产来源于魅族 Flyme OS。** 随仓库或 APK 分发的第三方字体、壁纸视频、效果遮罩、着色器和预览素材保留各自权利人的版权及适用条款，排除在 HyperAlive 的 MIT 授权范围之外。具体来源和排除路径见 [资源说明](THIRD_PARTY_NOTICES.md)。
