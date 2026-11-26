@@ -399,39 +399,6 @@ public final class Root {
         return appProcess(ctx, "com.hyperalive.aod.root.LspDb", args.toArray(new String[0]));
     }
 
-    /** which: 1=桌面 2=锁屏 3=两者 */
-    public static String setWallpaper(Context ctx, String pkg, String cls, int which) {
-        if ("com.flyme.alivewallpaper".equals(pkg) && ctx != null) {
-            try {
-                int rw = 0;
-                int rh = 0;
-                android.view.WindowManager wm = (android.view.WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
-                if (wm != null && wm.getDefaultDisplay() != null) {
-                    android.util.DisplayMetrics rdm = new android.util.DisplayMetrics();
-                    wm.getDefaultDisplay().getRealMetrics(rdm);
-                    rw = Math.min(rdm.widthPixels, rdm.heightPixels);
-                    rh = Math.max(rdm.widthPixels, rdm.heightPixels);
-                }
-                if (rw <= 0 || rh <= 0) {
-                    android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
-                    rw = Math.min(dm.widthPixels, dm.heightPixels);
-                    rh = Math.max(dm.widthPixels, dm.heightPixels);
-                }
-                if (rw > 0 && rh > 0) {
-                    int cx = rw / 2;
-                    int cy = Math.round(rh * 0.335f);
-                    int half = Math.round(rw * 0.2f);
-                    String pos = (cx - half) + "|" + (cy - half) + "|" + (cx + half) + "|" + (cy + half);
-                    int userId = android.os.Process.myUid() / 100000;
-                    su("/system/bin/settings put --user " + userId + " system alive_wallpaper_position " + shellQuote(pos)
-                            + "; /system/bin/settings put --user " + userId + " system enter_ambient_mode 1");
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        return setWallpaperComponentRaw(ctx, pkg, cls, which);
-    }
-
     /**
      * 严格校验 SetWall 返回文本：
      * 禁止仅抽取最后一行 success 而忽略先前异常或非 ERR 报错；所有非空行均须为合法 OK 结果行，

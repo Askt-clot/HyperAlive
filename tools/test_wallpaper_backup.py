@@ -284,6 +284,10 @@ public class Context {
         return new android.content.res.AssetManager();
     }
 
+    public android.content.res.Resources getResources() {
+        return new android.content.res.Resources();
+    }
+
     public synchronized SharedPreferences getSharedPreferences(String name, int mode) {
         SharedPreferences sp = prefsMap.get(name);
         if (sp == null) {
@@ -631,6 +635,10 @@ public class Bitmap {
 
     public static Bitmap createBitmap(Bitmap src, int x, int y, int width, int height) {
         return new Bitmap(Math.max(1, width), Math.max(1, height));
+    }
+
+    public static Bitmap createBitmap(int width, int height, Config config) {
+        return new Bitmap(width, height);
     }
 }
 """
@@ -2580,6 +2588,26 @@ public final class Phase2RegressionBridge {
             PhotoDraftStore.saveCroppedToDraft(ctx, sid, PhotoStore.HOME, stagedIn, draftHomeBmp, 0.4f, 0.5f, 1.8f);
             check("syncFrameToLockDraftWithDefaultCrop creates draft frame",
                     PhotoDraftStore.syncFrameToLockDraftWithDefaultCrop(ctx, sid));
+            java.io.File frameSlot = PhotoDraftStore.slotFile(ctx, sid, PhotoStore.FRAME);
+            android.graphics.Bitmap frameDraft = android.graphics.BitmapFactory.decodeFile(frameSlot.getAbsolutePath());
+            android.content.SharedPreferences framePrefs = PhotoDraftStore.cropPrefs(ctx, sid);
+            check("default frame uses the full-screen crop and stores the framing shown in the editor",
+                    frameDraft.getWidth() == 1200 && frameDraft.getHeight() == 2608
+                            && framePrefs.getFloat("x_" + PhotoStore.FRAME, 0f) == 0.5f
+                            && framePrefs.getFloat("y_" + PhotoStore.FRAME, 0f) > 0.5f
+                            && framePrefs.getFloat("zoom_" + PhotoStore.FRAME, 1f) < 1f);
+            check("opening the frame again preserves its stored crop",
+                    !PhotoDraftStore.ensureFrameDraft(ctx, sid));
+
+            try (java.io.OutputStream oldFrame = new java.io.FileOutputStream(frameSlot)) {
+                new android.graphics.Bitmap(600, 600).compress(android.graphics.Bitmap.CompressFormat.PNG, 100, oldFrame);
+            }
+            framePrefs.edit().remove("x_" + PhotoStore.FRAME).remove("y_" + PhotoStore.FRAME)
+                    .remove("zoom_" + PhotoStore.FRAME).commit();
+            check("a legacy default square is re-exported from its original photo into the editor draft",
+                    PhotoDraftStore.ensureFrameDraft(ctx, sid)
+                            && android.graphics.BitmapFactory.decodeFile(frameSlot.getAbsolutePath()).getHeight() == 2608
+                            && framePrefs.contains("zoom_" + PhotoStore.FRAME));
 
             check("committed lock/home CE+DE bytes stay identical while drafting",
                     java.util.Arrays.equals(committedLockBytes, readBytesFile(PhotoStore.file(ctx, PhotoStore.LOCK)))
@@ -2851,7 +2879,6 @@ public final class Phase2RegressionBridge {
                             android.content.Context c, PreModuleWallpaperBackup.PreApplyBaseline b) {
                         return new PreModuleWallpaperBackup.RollbackResult(true, "ok");
                     }
-                    @Override public void syncAliveScope(android.content.Context c, String w) {}
                     @Override public String setDynamicWallpaper(android.content.Context c, String p, String cls) { return "OK dyn"; }
                     @Override public String setDualWallpaper(android.content.Context c, String p, String h, String l) { return "OK dual"; }
                     @Override public PreModuleWallpaperBackup.SlotVerifyResult verifyAppliedSlots(
@@ -2864,7 +2891,7 @@ public final class Phase2RegressionBridge {
                 };
                 EditorActivity.ApplyTxResult blockedApply = EditorActivity.executeApplyTransactionCore(
                         ctx,
-                        new EditorActivity.ApplyTxRequest(sid, -1, null, null, LastSet.KIND_PHOTO, null, false),
+                        new EditorActivity.ApplyTxRequest(sid, -1, null, null, LastSet.KIND_PHOTO, null, false, false, -1, null),
                         noOpEnv);
                 check("transient recovery failure marks RECOVERY_FAILED, preserves snapshot, and blocks new apply",
                         !rFail.ok && PhotoDraftStore.hasUnresolvedRecovery(ctx)
@@ -2933,21 +2960,30 @@ public final class Phase2RegressionBridge {
                     AodStyleSettings.getStyle(ctx) == 2 && !startupSnap.snapshotDir.exists());
 
             // 5E. EditorActivity.executeApplyTransactionCore full failure/throw rollback + draft preservation + DE raw verification
-            final int[] envMode = new int[]{0}; // 0=setDual throws, 1=verify throws, 2=verify returns false
+            final int[] envMode = new int[]{0}; // 0=setDual throws, 1=verify throws, 2=mismatch, 3=success
+            final boolean[] expectBackup = {true};
+            final boolean[] backupFails = {false};
+            final int[] appliedBindings = {0};
             EditorActivity.ApplyTxEnv failingTxEnv = new EditorActivity.ApplyTxEnv() {
-                @Override public boolean hasValidBackup(android.content.Context c) { return true; }
+                @Override public boolean hasValidBackup(android.content.Context c) {
+                    if (!expectBackup[0]) throw new AssertionError("Direct apply inspected the original backup");
+                    return !backupFails[0];
+                }
                 @Override public PreModuleWallpaperBackup.BackupPrepResult ensureBackupBeforeApply(android.content.Context c) {
+                    if (!expectBackup[0]) throw new AssertionError("Direct apply attempted an original backup");
+                    if (backupFails[0]) return new PreModuleWallpaperBackup.BackupPrepResult(false, false, "unsupported");
                     return new PreModuleWallpaperBackup.BackupPrepResult(true, false, "existing backup ok");
                 }
                 @Override public PreModuleWallpaperBackup.RollbackResult rollbackCreatedBackupIfUnapplied(
                         android.content.Context c, PreModuleWallpaperBackup.PreApplyBaseline b) {
                     return new PreModuleWallpaperBackup.RollbackResult(true, "ok");
                 }
-                @Override public void syncAliveScope(android.content.Context c, String w) {}
                 @Override public String setDynamicWallpaper(android.content.Context c, String p, String cls) {
+                    appliedBindings[0]++;
                     return "OK dyn";
                 }
                 @Override public String setDualWallpaper(android.content.Context c, String p, String h, String l) {
+                    appliedBindings[0]++;
                     if (envMode[0] == 0) {
                         throw new RuntimeException("simulated setDualWallpaper binder crash");
                     }
@@ -2958,7 +2994,7 @@ public final class Phase2RegressionBridge {
                     if (envMode[0] == 1) {
                         throw new IllegalStateException("simulated wms dump crash");
                     }
-                    return new PreModuleWallpaperBackup.SlotVerifyResult(false, "injected slot mismatch");
+                    return new PreModuleWallpaperBackup.SlotVerifyResult(envMode[0] == 3, "injected slot result");
                 }
                 @Override public PhotoDraftStore.CommitTargetWriter commitWriter() { return PhotoDraftStore.DEFAULT_COMMIT_WRITER; }
                 @Override public void onStageMessage(String m) {}
@@ -2967,7 +3003,7 @@ public final class Phase2RegressionBridge {
             ClockSettings.Config pendingAodNew = initAod.copy();
             pendingAodNew.style = 1;
             EditorActivity.ApplyTxRequest txReq = new EditorActivity.ApplyTxRequest(
-                    sid, 4, pendingAodNew, initLock.copy(), LastSet.KIND_PHOTO, null, false);
+                    sid, 4, pendingAodNew, initLock.copy(), LastSet.KIND_PHOTO, null, false, true, -1, null);
             for (int m = 0; m < 3; m++) {
                 envMode[0] = m;
                 EditorActivity.ApplyTxResult txRes = EditorActivity.executeApplyTransactionCore(ctx, txReq, failingTxEnv);
@@ -3065,7 +3101,7 @@ public final class Phase2RegressionBridge {
                     (d, n) -> n.startsWith(PhotoStore.LOCK + ".rev_prev."));
             EditorActivity.ApplyTxResult blockedCorruptApply = EditorActivity.executeApplyTransactionCore(
                     ctx,
-                    new EditorActivity.ApplyTxRequest(sid, -1, null, null, LastSet.KIND_PHOTO, null, false),
+                    new EditorActivity.ApplyTxRequest(sid, -1, null, null, LastSet.KIND_PHOTO, null, false, true, -1, null),
                     failingTxEnv);
             check("draft revision rollback failure reports rollback status, preserves rev_prev backup, marks session corrupt, and blocks commitDraft & executeApplyTransactionCore",
                     revFailMsg.contains("回滚")
@@ -3109,7 +3145,6 @@ public final class Phase2RegressionBridge {
                     backupRollbackCalls[0]++;
                     return new PreModuleWallpaperBackup.RollbackResult(true, "cleaned");
                 }
-                @Override public void syncAliveScope(android.content.Context c, String w) {}
                 @Override public String setDynamicWallpaper(android.content.Context c, String p, String cls) { return "OK dyn"; }
                 @Override public String setDualWallpaper(android.content.Context c, String p, String h, String l) { return "OK dual"; }
                 @Override public PreModuleWallpaperBackup.SlotVerifyResult verifyAppliedSlots(
@@ -3126,7 +3161,7 @@ public final class Phase2RegressionBridge {
                 txHookMode[0] = 0;
                 EditorActivity.ApplyTxResult h1Res = EditorActivity.executeApplyTransactionCore(
                         ctx,
-                        new EditorActivity.ApplyTxRequest(sid, AodStyleSettings.STYLE_LEAVE_LIGHT, pendingAodNew, initLock.copy(), LastSet.KIND_PHOTO, null, false),
+                        new EditorActivity.ApplyTxRequest(sid, AodStyleSettings.STYLE_LEAVE_LIGHT, pendingAodNew, initLock.copy(), LastSet.KIND_PHOTO, null, false, true, -1, null),
                         succeedWithCreatedBackupEnv);
                 java.io.File[] h1Dirs = snapRootDir.listFiles();
                 check("completeTransactionSnapshot/rollback COMMITTED write failure does not claim success, preserves PENDING snapshot journal, and preserves backup",
@@ -3155,7 +3190,7 @@ public final class Phase2RegressionBridge {
                 });
                 EditorActivity.ApplyTxResult h2Res = EditorActivity.executeApplyTransactionCore(
                         ctx,
-                        new EditorActivity.ApplyTxRequest(sid, AodStyleSettings.STYLE_LEAVE_LIGHT, pendingAodNew, initLock.copy(), LastSet.KIND_PHOTO, null, false),
+                        new EditorActivity.ApplyTxRequest(sid, AodStyleSettings.STYLE_LEAVE_LIGHT, pendingAodNew, initLock.copy(), LastSet.KIND_PHOTO, null, false, true, -1, null),
                         succeedWithCreatedBackupEnv);
                 java.io.File[] h2Dirs = snapRootDir.listFiles();
                 check("cleanup failure after durable COMMITTED returns ok=true: " + h2Res.fullFailureMessage,
@@ -3180,6 +3215,54 @@ public final class Phase2RegressionBridge {
             } finally {
                 PhotoDraftStore.setTxLifecycleFaultHookForTest(null);
             }
+
+            backupFails[0] = true;
+            envMode[0] = 3;
+            int bindsBefore = appliedBindings[0];
+            EditorActivity.ApplyTxResult backupFailed = EditorActivity.executeApplyTransactionCore(ctx, txReq, failingTxEnv);
+            check("explicit backup failure offers a retry before any wallpaper binding",
+                    !backupFailed.ok && backupFailed.prep != null && !backupFailed.prep.ok
+                            && appliedBindings[0] == bindsBefore);
+
+            expectBackup[0] = false;
+            int photoTextures = PhotoTextureSettings.selection(PhotoTextureSettings.WAVE, PhotoTextureSettings.FROSTED);
+            int previousTextures = PhotoTextureSettings.get(ctx);
+            int[] previousPositions = AodStyleSettings.getPositions(ctx);
+            int[] newPositions = previousPositions.clone();
+            newPositions[AodStyleSettings.STYLE_SET_SAIL] = AodStyleSettings.packPosition(-0.2f, 0.1f);
+            newPositions[AodStyleSettings.STYLE_GALAXY] = AodStyleSettings.packPosition(0.15f, -0.3f);
+            String encodedPositions = AodStyleSettings.encodePositions(newPositions);
+            EditorActivity.ApplyTxRequest directCustom = new EditorActivity.ApplyTxRequest(
+                    sid, AodStyleSettings.STYLE_SET_SAIL, null, null, LastSet.KIND_PHOTO, null,
+                    false, false, photoTextures, encodedPositions);
+            envMode[0] = 2;
+            EditorActivity.ApplyTxResult directFailed = EditorActivity.executeApplyTransactionCore(ctx, directCustom, failingTxEnv);
+            check("direct application still rolls back the module transaction on slot mismatch: "
+                            + directFailed.fullFailureMessage,
+                    !directFailed.ok && directFailed.prep == null && directFailed.rollbackSucceeded
+                            && !PhotoDraftStore.hasUnresolvedRecovery(ctx));
+            check("failed application restores the previously committed texture pair",
+                    PhotoTextureSettings.get(ctx) == previousTextures
+                            && PhotoTextureSettings.get(DirectBootContext.get(ctx)) == previousTextures);
+            check("failed application rolls back all AOD style positions",
+                    java.util.Arrays.equals(previousPositions, AodStyleSettings.getPositions(ctx)));
+            envMode[0] = 3;
+            EditorActivity.ApplyTxResult directApplied = EditorActivity.executeApplyTransactionCore(ctx, directCustom, failingTxEnv);
+            check("direct custom application succeeds without checking or creating an original wallpaper backup",
+                    directApplied.ok && directApplied.prep == null && !directApplied.dynamicMode);
+            check("application commits the independent lock and home textures into direct boot storage",
+                    PhotoTextureSettings.get(ctx) == photoTextures
+                            && PhotoTextureSettings.get(DirectBootContext.get(ctx)) == photoTextures);
+            check("application persists each AOD style position in credential and direct boot storage",
+                    java.util.Arrays.equals(newPositions, AodStyleSettings.getPositions(DirectBootContext.get(ctx)))
+                            && encodedPositions.equals(ctx.getSharedPreferences(AodStyleSettings.PREF_NAME, 0)
+                                    .getString(AodStyleSettings.KEY_POSITIONS, "")));
+            EditorActivity.ApplyTxRequest directDynamic = new EditorActivity.ApplyTxRequest(
+                    sid, -1, null, null, LastSet.KIND_DYNAMIC, "openalive:402", false, false, -1, null);
+            EditorActivity.ApplyTxResult dynamicApplied = EditorActivity.executeApplyTransactionCore(ctx, directDynamic, failingTxEnv);
+            check("direct dynamic application also skips original wallpaper backup",
+                    dynamicApplied.ok && dynamicApplied.prep == null && dynamicApplied.dynamicMode
+                            && "openalive:402".equals(LastSet.component(ctx)));
 
             PhotoDraftStore.releaseDraftLeaseAndDiscardIfIdle(ctx, sid, sidLease);
 
@@ -3728,20 +3811,62 @@ public final class Phase2RegressionBridge {
                         && appliedUiSeqs.get(0) == fastSeq1
                         && fastSeqSink.get() > fastSeq2);
 
-        // 11i. LibraryActivity atomic VariantCacheSnapshot publication (rejects stale scan overwrite)
-        LibraryActivity.resetVariantCacheForTest();
-        java.util.Map<String, Integer> v1Map = new java.util.HashMap<>();
-        v1Map.put("com.flyme.alivewallpaper/.A", 1);
-        java.util.Map<String, Integer> v2Map = new java.util.HashMap<>();
-        v2Map.put("com.flyme.alivewallpaper/.B", 201);
-        LibraryActivity.tryPublishVariantCacheSnapshot(200L, 200L, v2Map);
-        LibraryActivity.tryPublishVariantCacheSnapshot(100L, 200L, v1Map);
-        LibraryActivity.tryPublishVariantCacheSnapshot(100L, 100L, v1Map);
-        LibraryActivity.VariantCacheSnapshot curCache = LibraryActivity.getVariantCacheForTest();
-        check("LibraryActivity atomic VariantCacheSnapshot rejects stale scan from overwriting newer package updateTime",
-                curCache.updateTime == 200L
-                        && Integer.valueOf(201).equals(curCache.map.get("com.flyme.alivewallpaper/.B"))
-                        && !curCache.map.containsKey("com.flyme.alivewallpaper/.A"));
+        // 11i. OpenAlive catalogue order and previously saved selection identities.
+        int[] openAliveOrder = {1, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                101, 102, 103, 104, 105, 201, 202, 203, 204, 205,
+                16, 17, 18, 19, 301, 302, 303, 401, 402, 403, 501, 502, 503};
+        int[] actualOrder = DynamicWallpapers.ENTRIES.stream().mapToInt(entry -> entry.variant).toArray();
+        check("catalog has all 36 wallpapers in OpenAlive order", java.util.Arrays.equals(openAliveOrder, actualOrder));
+        check("Flyme 9 video IDs do not collide with saved Alive 1.3.2 video selections",
+                DynamicWallpapers.find("openalive:401").variant == 401
+                        && DynamicWallpapers.find("openalive:402").variant == 402
+                        && DynamicWallpapers.find("openalive:403").variant == 403
+                        && DynamicWallpapers.find("builtin:401").variant == 9
+                        && DynamicWallpapers.find("builtin:402").variant == 1
+                        && DynamicWallpapers.find("builtin:403").variant == 12);
+        check("legacy Nebula identities resolve to the same procedural wallpaper",
+                DynamicWallpapers.find("com.flyme.alivewallpaper/com.flyme.alive.VideoWallpaperV2").variant == 1
+                        && DynamicWallpapers.find("builtin:1").variant == 1);
+        check("unknown built-in and unrelated service do not become module selections",
+                DynamicWallpapers.find("builtin:404") == null
+                        && DynamicWallpapers.find("org.example.wallpaper/.Live") == null);
+
+        PhotoTextureMotion textures = new PhotoTextureMotion();
+        int independent = PhotoTextureSettings.selection(PhotoTextureSettings.WAVE, PhotoTextureSettings.FROSTED);
+        textures.update(independent, Motion.AOD, false, 0L);
+        textures.update(independent, Motion.LOCK, true, 0L);
+        textures.update(independent, Motion.LOCK, true, 425_000_000L);
+        float visibleStrength = textures.lock.strength;
+        check("lock texture reveals on wake while the independent home texture stays neutral",
+                visibleStrength > 0f && visibleStrength < 1f && textures.home.strength == 0f);
+        textures.update(independent, Motion.AOD, true, 425_000_000L);
+        check("a quick reversal preserves the visible lock texture sample",
+                textures.lock.strength == visibleStrength);
+        textures.update(independent, Motion.AOD, true, 625_000_000L);
+        check("both textures clear in stable AOD",
+                textures.lock.strength == 0f && textures.home.strength == 0f && !textures.active());
+        int shared = PhotoTextureSettings.selection(PhotoTextureSettings.WAVE, PhotoTextureSettings.WAVE);
+        textures.update(shared, Motion.LOCK, false, 625_000_000L);
+        textures.update(shared, Motion.HOME, true, 650_000_000L);
+        check("an identical lock and home style carries the current effect across unlock",
+                textures.lock == textures.home && textures.home.strength == 1f && !textures.active());
+
+        PhotoTextureMotion lockOpening = new PhotoTextureMotion();
+        lockOpening.update(independent, Motion.AOD, false, 0L);
+        lockOpening.update(independent, Motion.LOCK, true, 0L);
+        PhotoTextureMotion desktopOpening = new PhotoTextureMotion();
+        desktopOpening.copyFrom(lockOpening);
+        long quickUnlock = 256_000_000L;
+        lockOpening.update(independent, Motion.HOME, true, quickUnlock);
+        desktopOpening.update(independent, Motion.HOME, true, quickUnlock);
+        check("the desktop continues the sampled lock texture while its own texture starts",
+                desktopOpening.lock != lockOpening.lock
+                        && desktopOpening.lock.strength == lockOpening.lock.strength
+                        && desktopOpening.lock.strength > 0f && desktopOpening.home.strength == 0f);
+        PhotoTextureMotion replay = new PhotoTextureMotion();
+        replay.seekLockOpening(independent, 0L, quickUnlock);
+        check("fallback replay also reconstructs the outgoing lock texture",
+                replay.lock.strength == lockOpening.lock.strength && replay.lock.reveal == lockOpening.lock.reveal);
 
         // 11j. Bug 2 regression: LspState.queryLspState(nonNullCtx, false) & evaluateLspState tri-state checks
         String activeDbOut = "enabled=1 "
@@ -3786,6 +3911,15 @@ public final class Phase2RegressionBridge {
                         && styleAfterDraftMoon == AodStyleSettings.STYLE_LEAVE_LIGHT
                         && moonStyleAfterCancel == AodStyleSettings.STYLE_MOON
                         && LensRenderer.normalizeAodStyle(99) == AodStyleSettings.STYLE_SET_SAIL);
+        for (int addedStyle : new int[]{AodStyleSettings.STYLE_DOOR,
+                AodStyleSettings.STYLE_MOUNTAIN, AodStyleSettings.STYLE_GALAXY}) {
+            check("New style can be committed: " + addedStyle,
+                    AodStyleSettings.setStyleLocalStrict(bugCtx, addedStyle));
+            AodStyleSettings.resetCacheForTest();
+            check("Committed style survives cold cache reload: " + addedStyle,
+                    AodStyleSettings.getStyle(bugCtx) == addedStyle
+                            && LensRenderer.normalizeAodStyle(addedStyle) == addedStyle);
+        }
 
         // 11l. Bug 4 regression: EditorActivity apply transaction lock, neutral preparing copy & launch failure cleanup
         try {
@@ -3800,7 +3934,8 @@ public final class Phase2RegressionBridge {
             EditorActivity.endApplyTransaction();
         }
         check("EditorActivity apply progress messages distinguish preparing vs missing backup vs valid backup vs applying stage",
-                "正在准备备份…".equals(EditorActivity.resolvePreparingApplyProgressMessage())
+                "正在准备备份…".equals(EditorActivity.resolvePreparingApplyProgressMessage(true))
+                        && "正在应用壁纸与配置…".equals(EditorActivity.resolvePreparingApplyProgressMessage(false))
                         && EditorActivity.resolveInitialApplyProgressMessage(false).contains("正在备份原壁纸")
                         && "正在校验已有备份…".equals(EditorActivity.resolveInitialApplyProgressMessage(true))
                         && "正在应用壁纸与配置…".equals(EditorActivity.resolveApplyingStageProgressMessage()));
@@ -5540,6 +5675,79 @@ def compile_and_run_tests() -> None:
             "de/robv/android/xposed/XC_MethodHook.java": SHIM_XPOSED_HOOK,
             "android/graphics/Bitmap.java": SHIM_BITMAP,
             "android/graphics/BitmapFactory.java": SHIM_BITMAP_FACTORY,
+            "android/graphics/Point.java": "package android.graphics; public class Point { public int x, y; }",
+            "android/graphics/Matrix.java": """
+package android.graphics;
+public class Matrix {
+    public void setScale(float x, float y) {}
+    public boolean postTranslate(float x, float y) { return true; }
+}
+""",
+            "android/graphics/Canvas.java": """
+package android.graphics;
+public class Canvas {
+    public Canvas(Bitmap bitmap) {}
+    public void drawColor(int color) {}
+    public void drawBitmap(Bitmap image, Matrix matrix, Paint paint) {}
+}
+""",
+            "android/graphics/Paint.java": "package android.graphics; public class Paint { public Paint(int flags) {} }",
+            "android/util/DisplayMetrics.java": "package android.util; public class DisplayMetrics { public int widthPixels = 1200, heightPixels = 2608; }",
+            "android/content/res/Resources.java": """
+package android.content.res;
+public class Resources {
+    public android.util.DisplayMetrics getDisplayMetrics() { return new android.util.DisplayMetrics(); }
+}
+""",
+            "android/util/Size.java": """
+package android.util;
+public class Size {
+    private final int width, height;
+    public Size(int width, int height) { this.width = width; this.height = height; }
+    public int getWidth() { return width; }
+    public int getHeight() { return height; }
+}
+""",
+            "android/graphics/ImageDecoder.java": """
+package android.graphics;
+import android.content.res.AssetManager;
+import android.util.Size;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+public class ImageDecoder {
+    public static final int ALLOCATOR_SOFTWARE = 1;
+    public static class Source { Bitmap bitmap; }
+    public static class ImageInfo {
+        private final Size size;
+        ImageInfo(Bitmap bitmap) { size = new Size(bitmap.getWidth(), bitmap.getHeight()); }
+        public Size getSize() { return size; }
+    }
+    public interface OnHeaderDecodedListener {
+        void onHeaderDecoded(ImageDecoder decoder, ImageInfo info, Source source);
+    }
+    private int width, height;
+    public static Source createSource(File file) {
+        Source input = new Source();
+        input.bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+        return input;
+    }
+    public static Source createSource(AssetManager assets, String name) {
+        Source input = new Source();
+        try (InputStream stream = assets.open(name)) { input.bitmap = BitmapFactory.decodeStream(stream); }
+        catch (IOException ignored) {}
+        return input;
+    }
+    public void setTargetSize(int width, int height) { this.width = width; this.height = height; }
+    public void setAllocator(int allocator) {}
+    public static Bitmap decodeBitmap(Source source, OnHeaderDecodedListener listener) throws IOException {
+        if (source.bitmap == null) throw new IOException("Missing image fixture");
+        ImageDecoder decoder = new ImageDecoder();
+        listener.onHeaderDecoded(decoder, new ImageInfo(source.bitmap), source);
+        return new Bitmap(decoder.width, decoder.height);
+    }
+}
+""",
             "org/json/JSONException.java": SHIM_JSON_EXCEPTION,
             "org/json/JSONObject.java": SHIM_JSON_OBJECT,
             "org/json/JSONArray.java": SHIM_JSON_ARRAY,
@@ -6171,9 +6379,9 @@ def verify_rewrite_cleanup_contracts() -> None:
         "build.py must preserve KS, OUT, FINAL module attributes for import compatibility"
     valid_out, valid_final = build_mod.validate_build_paths(
         str(ROOT / "build/cli_out"),
-        str(ROOT / "build/HyperAlive-v1.0.4.apk"),
+        str(ROOT / "build/HyperAlive-v1.0.5.apk"),
     )
-    assert valid_final.endswith("HyperAlive-v1.0.4.apk"), "Valid build path must resolve to HyperAlive-v1.0.4.apk"
+    assert valid_final.endswith("HyperAlive-v1.0.5.apk"), "Valid build path must resolve to HyperAlive-v1.0.5.apk"
 
     def expect_build_path_error(out_p: str, final_p: str, desc: str) -> None:
         try:
@@ -6184,8 +6392,8 @@ def verify_rewrite_cleanup_contracts() -> None:
 
     expect_build_path_error(str(ROOT / "build/cli_out"), str(ROOT.parent / "external_dir/HyperAlive.apk"), "external APK write")
     expect_build_path_error(str(ROOT / "build/cli_out"), str(ROOT / "app/evil.apk"), "source tree APK write")
-    expect_build_path_error(str(ROOT / "build"), str(ROOT / "build/HyperAlive-v1.0.4.apk"), "OUT equal to build root")
-    expect_build_path_error(str(ROOT), str(ROOT / "build/HyperAlive-v1.0.4.apk"), "OUT equal to project root")
+    expect_build_path_error(str(ROOT / "build"), str(ROOT / "build/HyperAlive-v1.0.5.apk"), "OUT equal to build root")
+    expect_build_path_error(str(ROOT), str(ROOT / "build/HyperAlive-v1.0.5.apk"), "OUT equal to project root")
     expect_build_path_error(str(ROOT / "build/cli_out"), str(ROOT / "build/cli_out/nested.apk"), "final_apk inside OUT temp dir")
     expect_build_path_error(str(ROOT / "build/cli_out"), str(ROOT / "build/not_an_apk.txt"), "non-apk extension")
 

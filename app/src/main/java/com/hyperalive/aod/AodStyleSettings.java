@@ -10,16 +10,23 @@ import android.content.SharedPreferences;
  * 支持：
  *   0 = 启航（默认，圆形透镜，中心相框自转，全屏大圆爆发扩散）
  *   1 = 留光（魅族经典，-5°流光拍立得双层相框遮罩，优雅绽放铺满全屏）
- *   2 = 星月（魅族官方经典，弯月星芒遮罩，朦胧高斯绽放铺满全屏）
+ *   2 = 星月，3 = 轻启，4 = 山脉，5 = 银河（照片遮罩）
  */
 public final class AodStyleSettings {
 
     public static final String PREF_NAME = "qihang_aod_style";
     public static final String KEY_STYLE = "aod_style";
+    static final String KEY_POSITIONS = "aod_style_positions";
 
     public static final int STYLE_SET_SAIL = 0;    // 启航
     public static final int STYLE_LEAVE_LIGHT = 1; // 留光
     public static final int STYLE_MOON = 2;        // 星月
+    public static final int STYLE_DOOR = 3;        // 轻启
+    public static final int STYLE_MOUNTAIN = 4;    // 山脉
+    public static final int STYLE_GALAXY = 5;      // 银河
+    private static final int STYLE_COUNT = STYLE_GALAXY + 1;
+    static final float POSITION_UNITS = 10000f;
+    static final float CENTER_LIMIT = 0.45f;
 
     public static final String ACTION_STYLE_CHANGED = "com.hyperalive.aod.AOD_STYLE_CHANGED";
 
@@ -45,10 +52,79 @@ public final class AodStyleSettings {
         return DirectBootContext.get(c);
     }
 
-    private static int normalizeStyle(int style) {
-        if (style == STYLE_LEAVE_LIGHT) return STYLE_LEAVE_LIGHT;
-        if (style == STYLE_MOON) return STYLE_MOON;
-        return STYLE_SET_SAIL;
+    static int normalizeStyle(int style) {
+        return style >= STYLE_SET_SAIL && style <= STYLE_GALAXY ? style : STYLE_SET_SAIL;
+    }
+
+    // 每轴用有符号 16 位整数保存，单位为预览宽度或高度的万分之一，Y 轴向上。
+    static int packPosition(float x, float y) {
+        int packedX = Math.round(Math.max(-CENTER_LIMIT, Math.min(CENTER_LIMIT, x)) * POSITION_UNITS);
+        int packedY = Math.round(Math.max(-CENTER_LIMIT - Motion.AOD_Y,
+                Math.min(CENTER_LIMIT - Motion.AOD_Y, y)) * POSITION_UNITS);
+        return (packedX << 16) | (packedY & 0xffff);
+    }
+
+    static float positionX(int position) {
+        return (position >> 16) / POSITION_UNITS;
+    }
+
+    static float positionY(int position) {
+        return (short) position / POSITION_UNITS;
+    }
+
+    static int[] decodePositions(String encoded) {
+        int[] positions = new int[STYLE_COUNT];
+        if (encoded.isEmpty()) return positions;
+        String[] values = encoded.split(",", -1);
+        for (int i = 0; i < Math.min(values.length, positions.length); i++) {
+            try {
+                int position = Integer.parseInt(values[i]);
+                positions[i] = packPosition(positionX(position), positionY(position));
+            } catch (NumberFormatException ignored) {}
+        }
+        return positions;
+    }
+
+    static String encodePositions(int[] positions) {
+        StringBuilder encoded = new StringBuilder();
+        for (int i = 0; i < positions.length; i++) {
+            if (i > 0) encoded.append(',');
+            encoded.append(positions[i]);
+        }
+        return encoded.toString();
+    }
+
+    static int[] getPositions(Context context) {
+        Context safe = getSafeContext(context);
+        if (safe != null) {
+            try {
+                String stored = safe.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                        .getString(KEY_POSITIONS, null);
+                if (stored != null) return decodePositions(stored);
+            } catch (RuntimeException ignored) {}
+        }
+        try {
+            if (context != null && safe != context) {
+                return decodePositions(context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                        .getString(KEY_POSITIONS, ""));
+            }
+        } catch (RuntimeException ignored) {}
+        return new int[STYLE_COUNT];
+    }
+
+    static boolean savePositionsStrict(Context context, String encoded) {
+        if (context == null) return false;
+        Context safe = getSafeContext(context);
+        try {
+            boolean deOk = safe == null || safe == context
+                    || safe.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                            .edit().putString(KEY_POSITIONS, encoded).commit();
+            boolean ceOk = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_POSITIONS, encoded).commit();
+            return ceOk && deOk;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     public static void updateCachedStyle(int style) {
@@ -61,7 +137,7 @@ public final class AodStyleSettings {
 
     public static int getStyle(Context context) {
         int cached = sCachedStyle;
-        if (cached == STYLE_SET_SAIL || cached == STYLE_LEAVE_LIGHT || cached == STYLE_MOON) {
+        if (cached >= STYLE_SET_SAIL) {
             return cached;
         }
         if (context == null) {

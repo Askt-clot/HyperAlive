@@ -2,13 +2,12 @@ package com.hyperalive.aod;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.drawable.Drawable;
 
 /**
  * 「最后一次在模块里设置的壁纸」——首页三态瓦片与编辑器预览都按它展示，
  * 不去读系统实时状态（桌面被系统/其它应用改过也不影响展示）。
  *
- * <p>记录内容：桌面来源 kind（0=动态壁纸 1=跟随锁屏 2=独立照片）+ 动态壁纸组件；
+ * <p>记录内容：桌面来源 kind（0=动态壁纸 1=跟随锁屏 2=独立照片）+ 动态壁纸标识；
  * 图片本身就在 {@link PhotoStore} 的 lock_photo.png / home_photo.png。
  */
 final class LastSet {
@@ -109,8 +108,7 @@ final class LastSet {
     static Bitmap preview(Context c, int mode) {
         if (kind(c) == KIND_DYNAMIC) {
             String comp = component(c);
-            Drawable d = LibraryActivity.thumbnailFor(c, comp);
-            Bitmap b = LivePreview.toBitmap(d);
+            Bitmap b = LivePreview.toBitmap(DynamicWallpapers.thumbnailFor(c, comp));
             if (b != null) {
                 return b;
             }

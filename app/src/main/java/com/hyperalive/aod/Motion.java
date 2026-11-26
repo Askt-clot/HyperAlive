@@ -27,6 +27,10 @@ final class Motion {
     static final int LOCK = 1;
     static final int HOME = 2;
 
+    private static final int[] TRANSITION_SOURCE = {AOD, LOCK, AOD, HOME, LOCK, HOME};
+    private static final int[] TRANSITION_TARGET = {LOCK, AOD, HOME, AOD, HOME, LOCK};
+    private static final long[] SAIL_BLEND_MS = {950, 650, 650, 650, 500, 500};
+
     static final int N = 10;
     static final int BLUR = 0;
     static final int SCALE = 1;
@@ -45,6 +49,9 @@ final class Motion {
     static final float AOD_Y = 0.165f;
     /** 桌面稳态不模糊（与锁屏一致），避免解锁进桌面时画面变糊。 */
     static final float HOME_BLUR = 0f;
+    private static final float SAIL_SPLIT_HOME_BLUR = 16f;
+    private static final long SAIL_HOME_BLEND_MS = 300;
+    private static final long SAIL_HANDOFF_UNWARP_MS = 120;
     static final float AOD_BLUR = 22f;
     static final float DEG_PER_SEC = 40f;
     /** AodMotionWindow：息屏 3000ms 线性降速（「息屏动画持续播放」关闭时才用）。 */
@@ -61,26 +68,13 @@ final class Motion {
     static final int F_MICROS = 6;
     static final int F_ALPHA = 7;
 
-    static final float LIUGUANG_ROTATION = -5f;
-    static final float LIUGUANG_SCALE = 0.70486f;
-    static final float LIUGUANG_EXPANDED_SCALE = 2.35f;
-    /** 留光拍立得相框中心在屏幕从上往下 33.5% 高度处（0.5 - 0.335 = 0.165f = AOD_Y），与 FlymeClockView 33.5% 锚点严格同心。 */
-    static final float LIUGUANG_AOD_Y = AOD_Y;
-    static final float LIUGUANG_END_MICROS = 483667f;
-
-    // ---- 魅族「星月」(moon, style=2) 独立 8 通道轨道参数（对齐 OpenAlive PhotoStyle.get(2)）----
-    static final float MOON_ROTATION = 0f;
-    static final float MOON_SCALE = 0.986f;
-    static final float MOON_EXPANDED_SCALE = 2.35f;
-    static final float MOON_CONTENT_SCALE = 2.34f;
-    static final float MOON_AOD_BLUR = 22f;
-    static final float MOON_AOD_Y = AOD_Y;
-    static final float MOON_END_MICROS = 516667f;
+    private static final float FRAME_EXPANDED_SCALE = 2.35f;
 
     /** cubic-bezier 曲线（Android PathInterpolator 语义）。 */
     static final class Curve {
         static final Curve DEFAULT = new Curve(-1, 0, 0, 0);
         static final Curve LINEAR = new Curve(-2, 0, 0, 0);
+        static final Curve FRAME_DEFAULT = new Curve(-3, 0, 0, 0);
         static final Curve EASE = new Curve(.33f, 0f, .67f, 1f);
         static final Curve EXPAND = new Curve(.13f, .04f, 0f, 1f);
         static final Curve COLLAPSE = new Curve(.37f, .04f, .04f, 1f);
@@ -102,6 +96,12 @@ final class Motion {
         static final Curve MOON_SCALE_CLOSE = new Curve(.32f, -.04f, .1f, 1.01f);
         /** 星月专用展开模糊/内容曲线 path(0.37, 0.01, 0.34, 1)。 */
         static final Curve MOON_CONTENT_OPEN = new Curve(.37f, .01f, .34f, 1f);
+        static final Curve MASK_EASE = new Curve(.25f, 0f, .25f, 1f);
+        static final Curve DOOR_GEOMETRY_OPEN = new Curve(.06f, .12f, .25f, 1f);
+        static final Curve DOOR_CONTENT_OPEN = new Curve(.17f, 0f, .25f, 1f);
+        static final Curve MOUNTAIN_POSITION_CLOSE = new Curve(.14f, 0f, .33f, .95f);
+        static final Curve MOUNTAIN_SCALE_CLOSE = new Curve(.14f, 0f, .67f, 1f);
+        static final Curve GALAXY_GEOMETRY_CLOSE = new Curve(.14f, 0f, .1f, 1f);
 
         private final float x1;
         private final float y1;
@@ -127,6 +127,9 @@ final class Motion {
             }
             if (this == LINEAR) {
                 return t;
+            }
+            if (this == FRAME_DEFAULT) {
+                return (float) ((1.0 - Math.cos(Math.PI * t)) * 0.5);
             }
             float lo = 0f;
             float hi = 1f;
@@ -173,6 +176,7 @@ final class Motion {
     private long ratioMs = 500;
     private int ratioTarget = HOME;
     private long ratioDelayMs;
+    private Curve ratioCurve = Curve.LINEAR;
 
     final LensMatrices matrices;
     final float[] photoMatrix = new float[16];
@@ -181,6 +185,27 @@ final class Motion {
 
     int mode = LOCK;
     int aodStyle = AodStyleSettings.STYLE_SET_SAIL;
+    private float aodX;
+    private float aodY = AOD_Y;
+
+    void setAodPosition(float x, float yOffset) {
+        float y = AOD_Y + yOffset;
+        if (aodX == x && aodY == y) return;
+        aodX = x;
+        aodY = y;
+        if (mode != AOD) return;
+        if (animating) {
+            to[X] = x;
+            to[Y] = y;
+            frameTo[F_X] = x;
+            frameTo[F_Y] = y;
+            frameTracked[F_X] = true;
+            frameTracked[F_Y] = true;
+        } else {
+            values[X] = frameValues[F_X] = x;
+            values[Y] = frameValues[F_Y] = y;
+        }
+    }
 
     void setAodStyle(int style) {
         if (this.aodStyle != style) {
@@ -197,8 +222,9 @@ final class Motion {
     }
     /** 「息屏动画持续播放」（sail_continuous_aod），官方默认 true。 */
     boolean continuousAod = true;
-    /** ratio[息屏, 锁屏, 桌面]，仅用于日志/调试（本实现单 pass，不做三 target 加权）。 */
+    /** 息屏、锁屏、桌面的合成权重。 */
     final float[] ratio = new float[3];
+    private boolean independentSailSurfaces;
 
     private long startNanos;
     private long lastFrameNanos;
@@ -307,6 +333,20 @@ final class Motion {
         return frameValues[F_ALPHA];
     }
 
+    /** The card blend owns the AOD weight. Normalize the two wallpaper weights separately. */
+    float frameHomeRatio() {
+        float wallpaperRatio = ratio[LOCK] + ratio[HOME];
+        return wallpaperRatio > 0.00001f ? ratio[HOME] / wallpaperRatio : mode == HOME ? 1f : 0f;
+    }
+
+    boolean frameExpanded() {
+        return mode != AOD && frameValues[F_MICROS] == PhotoMaskStyle.LEAVE_LIGHT.endMicros
+                && frameValues[F_ALPHA] == 0f && frameValues[F_ROTATION] == 0f
+                && frameValues[F_X] == 0f && frameValues[F_Y] == 0f
+                && frameValues[F_SCALE] == Math.max(FRAME_EXPANDED_SCALE, aspect + .05f)
+                && frameValues[F_CONTENT] == aspect / frameValues[F_SCALE];
+    }
+
     /** 官方 transition() 编码。 */
     static int transition(int from, int to) {
         if (from == AOD) {
@@ -327,26 +367,54 @@ final class Motion {
     /** 三态 lens 十通道初值。 */
     private float[] stateOf(int scene) {
         if (scene == AOD) {
-            return new float[]{AOD_BLUR, AOD_SCALE, AOD_DISTORTION, 1f, 0f, 0f, AOD_Y, 1f, 0f, Float.NaN};
+            return new float[]{AOD_BLUR, AOD_SCALE, AOD_DISTORTION, 1f, 0f, aodX, aodY, 1f, 0f, Float.NaN};
         }
-        float blur = scene == LOCK ? 0f : HOME_BLUR;
+        float blur = scene == LOCK ? 0f : sailHomeBlur();
         return new float[]{blur, expandedScale, 0f, 0f, -149f, 0f, 0f, 0f, 1.24f, -360f};
     }
 
-    /** 留光（leave_light）与星月（moon）三态 8 通道初值（对齐 OpenAlive PhotoStyle）。 */
+    void setIndependentSailSurfaces(boolean independent) {
+        if (independentSailSurfaces == independent) return;
+        independentSailSurfaces = independent;
+        if (mode == HOME && !animating) values[BLUR] = sailHomeBlur();
+    }
+
+    boolean hasIndependentSailSurfaces() {
+        return independentSailSurfaces;
+    }
+
+    private float sailHomeBlur() {
+        return independentSailSurfaces ? SAIL_SPLIT_HOME_BLUR : HOME_BLUR;
+    }
+
+    /** 遮罩三态的初值。AOD 锚点与 HyperAlive 的时钟布局对齐。 */
     private float[] frameStateOf(int scene) {
-        if (aodStyle == AodStyleSettings.STYLE_MOON) {
-            if (scene == AOD) {
-                return new float[]{MOON_AOD_BLUR, MOON_ROTATION, MOON_SCALE, MOON_CONTENT_SCALE, 0f, MOON_AOD_Y, 0f, 1f};
-            }
-            float fullScale = Math.max(MOON_EXPANDED_SCALE, aspect + 0.05f);
-            return new float[]{0f, 0f, fullScale, aspect / fullScale, 0f, 0f, MOON_END_MICROS, scene == LOCK ? 1f : 0f};
-        }
+        PhotoMaskStyle style = PhotoMaskStyle.forId(aodStyle);
+        if (style == null) style = PhotoMaskStyle.LEAVE_LIGHT;
+        boolean paired = style == PhotoMaskStyle.LEAVE_LIGHT;
         if (scene == AOD) {
-            return new float[]{0f, LIUGUANG_ROTATION, LIUGUANG_SCALE, 1f, 0f, LIUGUANG_AOD_Y, 0f, 1f};
+            return new float[]{style.blur, paired ? -5f : 0f, style.scale, style.content, aodX, aodY, 0f, 1f};
         }
-        float fullScale = Math.max(LIUGUANG_EXPANDED_SCALE, aspect + 0.05f);
-        return new float[]{0f, 0f, fullScale, aspect / fullScale, 0f, 0f, LIUGUANG_END_MICROS, 0f};
+        float fullScale = Math.max(FRAME_EXPANDED_SCALE, aspect + 0.05f);
+        return new float[]{0f, 0f, fullScale, aspect / fullScale, 0f, 0f, style.endMicros,
+                scene == LOCK && !paired ? 1f : 0f};
+    }
+
+    private boolean usesAddedMaskStyle() {
+        return aodStyle >= AodStyleSettings.STYLE_DOOR && aodStyle <= AodStyleSettings.STYLE_GALAXY;
+    }
+
+    private boolean usesFrameBlendContinuity() {
+        return aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT || usesAddedMaskStyle();
+    }
+
+    private long blendDuration(int transition) {
+        if (independentSailSurfaces && transition == 2) return SAIL_HOME_BLEND_MS;
+        PhotoMaskStyle style = PhotoMaskStyle.forId(aodStyle);
+        if (style == null || (style == PhotoMaskStyle.LEAVE_LIGHT && transition >= 4)) {
+            return SAIL_BLEND_MS[transition];
+        }
+        return style.blendDuration(transition);
     }
 
     void applyState(int scene, long nowNanos) {
@@ -392,11 +460,25 @@ final class Motion {
             this.frameTracked[i] = src.frameTracked[i];
         }
         System.arraycopy(src.ratio, 0, this.ratio, 0, 3);
+        System.arraycopy(src.ratioFrom, 0, this.ratioFrom, 0, 3);
+        this.ratioRetarget = src.ratioRetarget;
+        this.ratioStartNanos = src.ratioStartNanos;
+        this.ratioMs = src.ratioMs;
+        this.ratioTarget = src.ratioTarget;
+        this.ratioDelayMs = src.ratioDelayMs;
+        this.ratioCurve = src.ratioCurve;
+        this.independentSailSurfaces = src.independentSailSurfaces;
         this.mode = src.mode;
         this.aodStyle = src.aodStyle;
+        this.aodX = src.aodX;
+        this.aodY = src.aodY;
         this.animating = src.animating;
         this.lastTransition = src.lastTransition;
         this.startNanos = src.startNanos;
+        this.lastFrameNanos = src.lastFrameNanos;
+        this.modeBefore = src.modeBefore;
+        this.modeEnterNanos = src.modeEnterNanos;
+        this.aodEnterNanos = src.aodEnterNanos;
     }
 
     /** 过渡已进行的毫秒数；没有正在进行的过渡时返回 -1。 */
@@ -410,10 +492,22 @@ final class Motion {
     /** 本轮过渡的整体时长（各通道 delay+dur 的最大值）。 */
     long totalDurationMs() {
         long max = 0;
-        for (int i = 0; i < N; i++) {
-            if (tracked[i]) {
-                max = Math.max(max, delayMs[i] + durMs[i]);
+        boolean pairedFrame = aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT;
+        if (!pairedFrame) {
+            for (int i = 0; i < N; i++) {
+                if (tracked[i]) max = Math.max(max, delayMs[i] + durMs[i]);
             }
+        }
+        if (usesFrameBlendContinuity()) {
+            for (int i = 0; i < FN; i++) {
+                if (frameTracked[i]) max = Math.max(max, frameDelayMs[i] + frameDurMs[i]);
+            }
+        }
+        if ((pairedFrame || independentSailSurfaces) && lastTransition >= 0) {
+            long blendEnd = ratioRetarget
+                    ? (ratioStartNanos - startNanos) / 1_000_000L + ratioMs
+                    : ratioDelayMs + blendDuration(lastTransition);
+            max = Math.max(max, blendEnd);
         }
         return max;
     }
@@ -483,6 +577,12 @@ final class Motion {
         float[] startFrameState = frameStateOf(fromMode);
         for (int i = 0; i < FN; i++) {
             frameFrom[i] = startFrameState[i];
+            if (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT) {
+                frameTracked[i] = frameFrom[i] != frameTo[i];
+            }
+        }
+        if (usesFrameBlendContinuity()) {
+            frameDurMs[F_MICROS] = Math.round(Math.abs(frameFrom[F_MICROS] - frameTo[F_MICROS]) / 1000f);
         }
         startNanos = nowNanos - Math.max(0, elapsedMs) * 1_000_000L;   // 回拨：使"现在"正好是 elapsedMs
         modeBefore = fromMode;
@@ -490,8 +590,12 @@ final class Motion {
         modeEnterNanos = nowNanos;
         animating = true;
         lastTransition = tr;
-        ratiosTo(toMode, nowNanos, 1);
         catchUpChannels(nowNanos);
+        if (usesFrameBlendContinuity() || independentSailSurfaces) {
+            updateRatio(nowNanos);
+        } else {
+            ratiosTo(toMode, nowNanos, 1);
+        }
     }
 
     /**
@@ -508,17 +612,38 @@ final class Motion {
             // ★ 锁屏扩散（tr0）的目标几何态与桌面（HOME）完全同构（大圆全屏展开、无模糊、无扭曲）。
             // 扩散正在平滑推进中（120Hz 实时渲染），绝不可打断原有轨迹重新建轨或回拨时间！
             // 保持原有 startNanos、from/to 轨线与曲线自然播完，仅更新模式与混合权重。
+            boolean addedMask = usesAddedMaskStyle();
+            if (usesFrameBlendContinuity() || independentSailSurfaces) {
+                catchUpChannels(nowNanos);
+                updateRatio(nowNanos);
+            }
             modeBefore = mode;
             mode = next;
             modeEnterNanos = nowNanos;
             long rem = remainingMs(nowNanos);
-            ratiosTo(next, nowNanos, Math.max(100, rem));
-            if (aodStyle == AodStyleSettings.STYLE_MOON) {
+            if (independentSailSurfaces && lastTransition == 0 && ratio[AOD] > 0f) {
+                // Keep the aperture moving, but let the residual lock image
+                // straighten before the independent desktop takes over.
+                if (values[DISTORTION] > 0f) {
+                    long elapsed = Math.max(0, (nowNanos - startNanos) / 1_000_000L);
+                    long distortionEnd = delayMs[DISTORTION] + durMs[DISTORTION];
+                    from[DISTORTION] = values[DISTORTION];
+                    delayMs[DISTORTION] = elapsed;
+                    durMs[DISTORTION] = Math.max(1, Math.min(SAIL_HANDOFF_UNWARP_MS, distortionEnd - elapsed));
+                    curves[DISTORTION] = Curve.EASE;
+                }
+                ratiosTo(next, nowNanos, SAIL_HOME_BLEND_MS);
+                ratioCurve = Curve.EASE;
+            } else {
+                ratiosTo(next, nowNanos, independentSailSurfaces ? blendDuration(4) : Math.max(100, rem));
+            }
+            if (addedMask || aodStyle == AodStyleSettings.STYLE_MOON) {
                 // 星月样式在 HOME 态光晕 alpha 归零
                 frameFrom[F_ALPHA] = frameValues[F_ALPHA];
                 frameTo[F_ALPHA] = 0f;
                 frameDurMs[F_ALPHA] = Math.max(100, rem);
-                frameDelayMs[F_ALPHA] = 0;
+                frameDelayMs[F_ALPHA] = addedMask ? Math.max(0, transitionElapsedMs(nowNanos)) : 0;
+                if (addedMask) frameTracked[F_ALPHA] = true;
             }
             android.util.Log.i("QihangAod", "平滑接力 LOCK→HOME: 保持原有扩散轨迹自然播完，剩余=" + rem + "ms");
             return;
@@ -571,6 +696,7 @@ final class Motion {
         ratioStartNanos = nowNanos;
         ratioMs = Math.max(1, ms);
         ratioRetarget = true;
+        ratioCurve = Curve.LINEAR;
     }
 
     void setMode(int next, boolean animate, long nowNanos) {
@@ -596,11 +722,19 @@ final class Motion {
             return;
         }
         boolean interrupted = animating;
+        if (interrupted && (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT || independentSailSurfaces)) {
+            catchUpChannels(nowNanos);
+            updateRatio(nowNanos);
+        }
         int tr = transition(prev, next);
         android.util.Log.i("QihangAod", "过渡 prev=" + prev + " next=" + next + " tr=" + tr
                 + " interrupted=" + interrupted + (prev != mode ? "（并掉了中间锁屏态）" : ""));
         lastTransition = tr;
         buildTracks(prev, next, tr, interrupted, nowNanos);
+        if (interrupted && (usesFrameBlendContinuity() || independentSailSurfaces)) {
+            ratiosTo(next, nowNanos, blendDuration(tr));
+            ratioCurve = tr == 2 || tr == 3 ? Curve.EASE : Curve.LINEAR;
+        }
         modeBefore = mode;
         modeEnterNanos = nowNanos;
         mode = next;
@@ -723,15 +857,16 @@ final class Motion {
         startNanos = nowNanos;
     }
 
-    /** 装载魅族「留光」(style=1) 与「星月」(style=2) 8 通道独立动画轨道（严格对齐 OpenAlive PhotoStyle）。 */
+    /** 装载照片遮罩的独立动画轨道。 */
     private void buildFrameTracks(int prev, int next, int tr, boolean interrupted, long wakeDelay) {
         float[] target = frameStateOf(next);
+        boolean pairedFrame = aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT;
         for (int i = 0; i < FN; i++) {
             frameFrom[i] = frameValues[i];
             frameTo[i] = target[i];
             frameDurMs[i] = 400;
             frameDelayMs[i] = 0;
-            frameCurves[i] = Curve.DEFAULT;
+            frameCurves[i] = pairedFrame ? Curve.FRAME_DEFAULT : Curve.DEFAULT;
             frameTracked[i] = true;
         }
         if (tr == 2 && !interrupted && prev == AOD) {
@@ -803,6 +938,8 @@ final class Motion {
                 frameDurMs[F_ALPHA] = 800;
                 frameCurves[F_ALPHA] = Curve.EASE;
             }
+        } else if (usesAddedMaskStyle()) {
+            buildAddedMaskTracks(tr);
         } else {
             // ---- 留光 (leave_light) 动画曲线与时长（对齐 OpenAlive PhotoStyle.get(1)）----
             if (tr == 0 || tr == 2) {
@@ -850,6 +987,49 @@ final class Motion {
 
         for (int i = 0; i < FN; i++) {
             frameDelayMs[i] += wakeDelay;
+            if (pairedFrame && frameFrom[i] == frameTo[i]) frameTracked[i] = false;
+        }
+    }
+
+    private void buildAddedMaskTracks(int transition) {
+        if (transition >= 4) {
+            if (transition == 4) setFrameTrack(800, 0, Curve.EASE, F_ALPHA);
+            return;
+        }
+        boolean open = transition == 0 || transition == 2;
+        switch (aodStyle) {
+            case AodStyleSettings.STYLE_DOOR:
+                setFrameTrack(open ? 250 : 433, open ? 133 : 200,
+                        open ? Curve.DOOR_GEOMETRY_OPEN : Curve.MASK_EASE, F_X, F_Y);
+                setFrameTrack(open ? 267 : 533, open ? 133 : 200,
+                        open ? Curve.DOOR_GEOMETRY_OPEN : Curve.MASK_EASE, F_SCALE);
+                setFrameTrack(open ? 717 : 667, 0,
+                        open ? Curve.DOOR_CONTENT_OPEN : Curve.EASE, F_CONTENT);
+                setFrameTrack(open ? 717 : 667, 0,
+                        open ? Curve.MASK_EASE : Curve.EASE, F_BLUR);
+                break;
+            case AodStyleSettings.STYLE_MOUNTAIN:
+                setFrameTrack(open ? 483 : 433, open ? 0 : 217,
+                        open ? Curve.MASK_EASE : Curve.MOUNTAIN_POSITION_CLOSE, F_X, F_Y);
+                setFrameTrack(open ? 483 : 467, open ? 0 : 217,
+                        open ? Curve.MASK_EASE : Curve.MOUNTAIN_SCALE_CLOSE, F_SCALE);
+                setFrameTrack(open ? 750 : 667, 0, Curve.MASK_EASE, F_BLUR, F_CONTENT);
+                break;
+            case AodStyleSettings.STYLE_GALAXY:
+                setFrameTrack(open ? 450 : 433, open ? 383 : 267,
+                        open ? Curve.MASK_EASE : Curve.GALAXY_GEOMETRY_CLOSE, F_X, F_Y);
+                setFrameTrack(open ? 517 : 533, open ? 317 : 267,
+                        open ? Curve.MASK_EASE : Curve.GALAXY_GEOMETRY_CLOSE, F_SCALE);
+                setFrameTrack(600, open ? 350 : 0, Curve.MASK_EASE, F_BLUR, F_CONTENT);
+                break;
+        }
+    }
+
+    private void setFrameTrack(long duration, long delay, Curve curve, int... channels) {
+        for (int channel : channels) {
+            frameDurMs[channel] = duration;
+            frameDelayMs[channel] = delay;
+            frameCurves[channel] = curve;
         }
     }
 
@@ -897,6 +1077,12 @@ final class Motion {
                     done = false;
                 }
             }
+            if (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT) {
+                done = nowNanos - startNanos >= totalDurationMs() * 1_000_000L;
+            } else if (done && (usesAddedMaskStyle() || independentSailSurfaces) && ratioRetarget
+                    && nowNanos - ratioStartNanos < ratioMs * 1_000_000L) {
+                done = false;
+            }
             if (done) {
                 animating = false;
                 for (int i = 0; i < N; i++) {
@@ -917,12 +1103,10 @@ final class Motion {
             float mul = aodSpeed(nowNanos);
             values[PHOTO_ANGLE] = (values[PHOTO_ANGLE] - dt * DEG_PER_SEC * values[SPEED] * mul) % 360f;
         }
-        // 息屏且无动画在跑时，每帧把圆心钉回 (aodX, aodY)
+        // 息屏且无动画在跑时，保持用户设置的图案位置。
         if (mode == AOD && !animating) {
-            values[X] = 0f;
-            values[Y] = AOD_Y;
-            frameValues[F_X] = 0f;
-            frameValues[F_Y] = (aodStyle == AodStyleSettings.STYLE_MOON) ? MOON_AOD_Y : LIUGUANG_AOD_Y;
+            values[X] = frameValues[F_X] = aodX;
+            values[Y] = frameValues[F_Y] = aodY;
         }
 
         updateRatio(nowNanos);
@@ -931,159 +1115,36 @@ final class Motion {
     }
 
     private void updateRatio(long nowNanos) {
-        // 官方 blendDuration()（aod==0、lock 默认 2、home 默认 6）：
-        //   启航: tr0 = max(950, 850) = 950；tr2 = 650；tr1 = 650；tr3 = 650
-        //   星月: tr0 = 533, tr1 = 743, tr2 = 553, tr3 = 743, tr4 = 800, tr5 = 400
-        //   留光: tr0 = 567, tr1 = 530, tr2 = 567, tr3 = 530, tr4 = 800, tr5 = 400
         if (!animating) {
             ratio[0] = mode == AOD ? 1f : 0f;
             ratio[1] = mode == LOCK ? 1f : 0f;
             ratio[2] = mode == HOME ? 1f : 0f;
+            ratioRetarget = false;
             return;
         }
-        // 续跑（continueTo / seekTransition）时 blend 权重也从当前值走，而不是按 lastTransition 从头算
         if (ratioRetarget) {
             float p = Math.min(1f, Math.max(0f, (nowNanos - ratioStartNanos) / (ratioMs * 1_000_000f)));
-            float e = Curve.LINEAR.eval(p);
+            float e = ratioCurve.eval(p);
             for (int i = 0; i < 3; i++) {
-                float t = i == ratioTarget ? 1f : 0f;
-                ratio[i] = ratioFrom[i] + (t - ratioFrom[i]) * e;
+                float target = i == ratioTarget ? 1f : 0f;
+                ratio[i] = ratioFrom[i] + (target - ratioFrom[i]) * e;
             }
-            if (p >= 1f) {
+            if (p >= 1f && !usesFrameBlendContinuity() && !independentSailSurfaces) {
                 ratioRetarget = false;
             }
             return;
         }
-        long tr = lastTransition;
-        long dur;
-        Curve c;
-        int target;
-        int src;
-        if (aodStyle == AodStyleSettings.STYLE_MOON) {
-            switch ((int) tr) {
-                case 0:
-                    dur = 533;
-                    c = Curve.LINEAR;
-                    src = AOD;
-                    target = LOCK;
-                    break;
-                case 2:
-                    dur = 553;
-                    c = Curve.EASE;
-                    src = AOD;
-                    target = HOME;
-                    break;
-                case 1:
-                    dur = 743;
-                    c = Curve.LINEAR;
-                    src = LOCK;
-                    target = AOD;
-                    break;
-                case 3:
-                    dur = 743;
-                    c = Curve.EASE;
-                    src = HOME;
-                    target = AOD;
-                    break;
-                case 4:
-                    dur = 800;
-                    c = Curve.LINEAR;
-                    src = LOCK;
-                    target = HOME;
-                    break;
-                default:
-                    dur = 400;
-                    c = Curve.LINEAR;
-                    src = HOME;
-                    target = LOCK;
-                    break;
-            }
-        } else if (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT) {
-            switch ((int) tr) {
-                case 0:
-                    dur = 567;
-                    c = Curve.LINEAR;
-                    src = AOD;
-                    target = LOCK;
-                    break;
-                case 2:
-                    dur = 567;
-                    c = Curve.EASE;
-                    src = AOD;
-                    target = HOME;
-                    break;
-                case 1:
-                    dur = 530;
-                    c = Curve.LINEAR;
-                    src = LOCK;
-                    target = AOD;
-                    break;
-                case 3:
-                    dur = 530;
-                    c = Curve.EASE;
-                    src = HOME;
-                    target = AOD;
-                    break;
-                case 4:
-                    dur = 800;
-                    c = Curve.LINEAR;
-                    src = LOCK;
-                    target = HOME;
-                    break;
-                default:
-                    dur = 400;
-                    c = Curve.LINEAR;
-                    src = HOME;
-                    target = LOCK;
-                    break;
-            }
-        } else {
-            switch ((int) tr) {
-                case 0:
-                    dur = 950;
-                    c = Curve.LINEAR;
-                    src = AOD;
-                    target = LOCK;
-                    break;
-                case 2:
-                    dur = 650;
-                    c = Curve.EASE;
-                    src = AOD;
-                    target = HOME;
-                    break;
-                case 1:
-                    dur = 650;
-                    c = Curve.LINEAR;
-                    src = LOCK;
-                    target = AOD;
-                    break;
-                case 3:
-                    dur = 650;
-                    c = Curve.EASE;
-                    src = HOME;
-                    target = AOD;
-                    break;
-                case 4:
-                    dur = 500;
-                    c = Curve.LINEAR;
-                    src = LOCK;
-                    target = HOME;
-                    break;
-                default:
-                    dur = 500;
-                    c = Curve.LINEAR;
-                    src = HOME;
-                    target = LOCK;
-                    break;
-            }
-        }
+        int tr = lastTransition;
+        long duration = blendDuration(tr);
+        Curve curve = tr == 2 || tr == 3 ? Curve.EASE : Curve.LINEAR;
         float p = Math.min(1f, Math.max(0f,
-                (nowNanos - startNanos - ratioDelayMs * 1_000_000L) / (dur * 1_000_000f)));
-        float e = c.eval(p);
+                (nowNanos - startNanos - ratioDelayMs * 1_000_000L) / (duration * 1_000_000f)));
+        float e = curve.eval(p);
         for (int i = 0; i < 3; i++) {
-            float s = i == src ? 1f : 0f;
-            float t = i == target ? 1f : 0f;
-            ratio[i] = s + (t - s) * e;
+            float fromRatio = i == TRANSITION_SOURCE[tr] ? 1f : 0f;
+            float toRatio = i == TRANSITION_TARGET[tr] ? 1f : 0f;
+            ratio[i] = fromRatio + (toRatio - fromRatio) * e;
         }
     }
+
 }

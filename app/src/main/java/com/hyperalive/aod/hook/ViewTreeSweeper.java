@@ -43,6 +43,8 @@ public final class ViewTreeSweeper {
         boolean nativeDiagnosticLogged;
         final ArrayList<WeakReference<View>> nativeDigits = new ArrayList<>();
         final ArrayList<WeakReference<TextView>> nativeClockTexts = new ArrayList<>();
+        final ArrayList<WeakReference<TextView>> nativeMagazineHours = new ArrayList<>();
+        final ArrayList<WeakReference<TextView>> nativeMagazineMinutes = new ArrayList<>();
         FlymeClockView lockClock;
         FlymeClockView aodClock;
         FlymeClockView bridgeClock;
@@ -90,6 +92,7 @@ public final class ViewTreeSweeper {
     public static void clearWhenNotOwned(View root) {
         stopSweep();
         AodHostBackgroundTracker.restoreAll("not_owned");
+        NativeClockHandoff.clear(root == null ? null : root.getRootView());
         if (root == null) return;
         RootState s = ROOTS.get(root.getRootView());
         if (s == null) return;
@@ -160,6 +163,8 @@ public final class ViewTreeSweeper {
         state.hostScanBudget = 8;
         state.nativeDigits.clear();
         state.nativeClockTexts.clear();
+        state.nativeMagazineHours.clear();
+        state.nativeMagazineMinutes.clear();
         collect(top, state, false, false, StateCoordinator.isAodEnabled(ctx));
         View aod = findHost(top, true);
         View lock = findHost(top, false);
@@ -212,6 +217,13 @@ public final class ViewTreeSweeper {
         if (inAod && "TimeView".equals(cls)) state.nativeDigits.add(new WeakReference<>(v));
         if (inAod && !inLock && isNativeClockTextView(v, id)) {
             state.nativeClockTexts.add(new WeakReference<>((TextView) v));
+        }
+        if (inAod && !inLock && v instanceof TextView) {
+            if ("current_time_hour_style1".equals(id)) {
+                state.nativeMagazineHours.add(new WeakReference<>((TextView) v));
+            } else if ("current_time_minute".equals(id)) {
+                state.nativeMagazineMinutes.add(new WeakReference<>((TextView) v));
+            }
         }
         if (AodHostBackgroundTracker.isHostViewDescriptor(v)) {
             addWeakUniqueHost(state.aodHosts, v);
@@ -359,7 +371,7 @@ public final class ViewTreeSweeper {
                 }
                 for (WeakReference<View> ref : s.nativeDigits) revealNativeDigits(ref.get());
             }
-            boolean nativeReady = nativeAodReady(s);
+            boolean nativeReady = sleeping && nativeAodReady(s);
             if (sleeping && !useCustomAod && s.bridgeSleepPending) {
                 boolean nativeTargetReady;
                 if (!s.nativeDigits.isEmpty()) {
@@ -392,6 +404,11 @@ public final class ViewTreeSweeper {
                     restoreResidualLockAlpha(s, node);
                 }
                 if (redrawLock && node != null) invalidateClockDigits(node);
+            }
+            if (sleeping && aodOn && !fullAod && !s.customAod && !s.customLock && !hideLock) {
+                NativeClockHandoff.align(root, s.nativeMagazineHours, s.nativeMagazineMinutes);
+            } else {
+                NativeClockHandoff.clear(root);
             }
             String policy = "sleep=" + sleeping + " lockScene=" + lockScene
                     + " customAod=" + s.customAod + " customLock=" + s.customLock
@@ -511,8 +528,11 @@ public final class ViewTreeSweeper {
     private static boolean nativeAodReady(RootState s) {
         if (StateCoordinator.isLinkageAnimating()) return false;
         View v = s.drawnAod == null ? null : s.drawnAod.get();
-        return s.drawnSleepAt == StateCoordinator.propGetLong(StateCoordinator.PROP_SLEEP_AT, 0)
-                && visibleContent(v);
+        if (s.drawnSleepAt == StateCoordinator.propGetLong(StateCoordinator.PROP_SLEEP_AT, 0)
+                && visibleContent(v)) return true;
+        // The magazine AOD renders with two TextViews, so it has no TimeView draw callback.
+        // Keep the outgoing clock until both laid-out parts will draw in the same frame.
+        return hasVisibleClockText(s.nativeMagazineHours) && hasVisibleClockText(s.nativeMagazineMinutes);
     }
 
     private static boolean isNativeClockTextView(View v, String id) {
@@ -536,9 +556,12 @@ public final class ViewTreeSweeper {
     }
 
     private static boolean nativeClockTextReady(RootState s) {
-        if (s == null || s.nativeClockTexts.isEmpty()) return false;
-        for (int i = 0; i < s.nativeClockTexts.size(); i++) {
-            TextView tv = s.nativeClockTexts.get(i).get();
+        return s != null && hasVisibleClockText(s.nativeClockTexts);
+    }
+
+    private static boolean hasVisibleClockText(ArrayList<WeakReference<TextView>> texts) {
+        for (int i = 0; i < texts.size(); i++) {
+            TextView tv = texts.get(i).get();
             if (tv != null && visibleContent(tv)) {
                 CharSequence text = tv.getText();
                 if (text != null && text.length() > 0) return true;

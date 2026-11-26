@@ -2,8 +2,11 @@ package com.hyperalive.aod;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.DashPathEffect;
 import android.graphics.Outline;
+import android.graphics.Paint;
 import android.graphics.SurfaceTexture;
 import android.view.Surface;
 import android.view.TextureView;
@@ -53,32 +56,69 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
         addView(still, new LayoutParams(-1, -1));
 
         this.aodStyle = AodStyleSettings.getStyle(c);
+        this.aodPosition = AodStyleSettings.getPositions(c)[aodStyle];
         ensureAodClock();
     }
 
     private FlymeClockView aodClock;
     private int aodStyle = AodStyleSettings.STYLE_SET_SAIL;
+    private int aodPosition;
     private boolean aodStyleOverridden = false;
+    private boolean aodPositionGuidesVisible;
+    private Paint aodPositionGuidePaint;
+    private int draftPhotoTextures = -1;
+
+    void setPhotoTextureStyles(int selection) {
+        draftPhotoTextures = selection;
+        if (renderer != null) renderer.setPhotoTextureStyles(selection);
+    }
 
     void setCommittedAodStyle(int style) {
         aodStyle = style;
+        aodPosition = AodStyleSettings.getPositions(getContext())[style];
         aodStyleOverridden = false;
-        if (renderer != null) {
-            renderer.setAodStyle(style);
-        }
-        if (aodClock != null) {
-            aodClock.setAodVisualStyle(style);
-        }
+        syncAodStyle();
     }
 
-    void setAodStyle(int style) {
+    void setAodStyle(int style, int position) {
         aodStyle = style;
+        aodPosition = position;
         aodStyleOverridden = true;
+        syncAodStyle();
+        if (aodPositionGuidesVisible) invalidate();
+    }
+
+    void setAodPositionGuidesVisible(boolean visible) {
+        if (aodPositionGuidesVisible == visible) return;
+        aodPositionGuidesVisible = visible;
+        invalidate();
+    }
+
+    @Override
+    protected void dispatchDraw(Canvas canvas) {
+        super.dispatchDraw(canvas);
+        if (!aodPositionGuidesVisible) return;
+        if (aodPositionGuidePaint == null) {
+            float density = getResources().getDisplayMetrics().density;
+            aodPositionGuidePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            aodPositionGuidePaint.setColor(0xC0FFFFFF);
+            aodPositionGuidePaint.setStrokeWidth(density * 0.75f);
+            aodPositionGuidePaint.setPathEffect(new DashPathEffect(
+                    new float[]{6f * density, 4f * density}, 0f));
+        }
+        float x = getWidth() * (0.5f + AodStyleSettings.positionX(aodPosition));
+        float y = getHeight() * (0.5f - Motion.AOD_Y - AodStyleSettings.positionY(aodPosition));
+        canvas.drawLine(x, 0f, x, getHeight(), aodPositionGuidePaint);
+        canvas.drawLine(0f, y, getWidth(), y, aodPositionGuidePaint);
+    }
+
+    private void syncAodStyle() {
         if (renderer != null) {
-            renderer.setAodStyle(style);
+            renderer.setAodStyle(aodStyle);
+            renderer.setAodPosition(aodPosition);
         }
         if (aodClock != null) {
-            aodClock.setAodVisualStyle(style);
+            aodClock.setAodVisualStyle(aodStyle);
         }
     }
 
@@ -144,7 +184,7 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
     private String photoName;
     /** 桌面来源（编辑器传入的当前选择）；-1 = 用模块记录里的值（首页瓦片）。 */
     private int homeKind = -1;
-    /** 编辑器当前选中的魅族动态壁纸组件（pkg/cls）；null = 首页瓦片按 LastSet 读取。 */
+    /** 编辑器当前选中的内置动态壁纸标识；null = 首页瓦片按 LastSet 读取。 */
     private String dynamicComponent;
     /** 编辑器草稿会话 ID；null = 首页等非草稿场景，仅读取已提交照片。 */
     private String draftSessionId;
@@ -164,7 +204,7 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
         dynamicComponent = comp;
     }
 
-    /** 当前是否处于魅族自带动态壁纸模式，若是则返回组件名（pkg/cls），否则返回 null。 */
+    /** 当前动态壁纸标识，否则返回 null。 */
     private String activeDynamicComponent() {
         int kind = homeKind >= 0 ? homeKind : LastSet.kind(getContext());
         if (kind == LastSet.KIND_DYNAMIC) {
@@ -209,7 +249,8 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
     /** 当前动态壁纸对应的 OpenAlive 实时渲染器 variant ID（0=无/非动态壁纸）。 */
     private int activeDynamicVariant() {
         String comp = activeDynamicComponent();
-        return comp != null ? LibraryActivity.variantFor(getContext(), comp) : 0;
+        DynamicWallpapers.Entry entry = DynamicWallpapers.find(comp);
+        return entry == null ? 0 : entry.variant;
     }
 
     /** 将锁屏图、独立桌面图、留光相框图以及动态壁纸 variant 同步给预览渲染器（编辑器中优先读草稿）。 */
@@ -217,8 +258,10 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
         if (renderer == null) {
             return;
         }
+        renderer.setPhotoTextureStyles(draftPhotoTextures >= 0 ? draftPhotoTextures
+                : PhotoTextureSettings.get(getContext()));
         int variant = activeDynamicVariant();
-        renderer.setPreviewVariant(variant);
+        renderer.setDynamicVariant(variant);
         if (variant > 0) {
             return;
         }
@@ -270,15 +313,13 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
         active = true;
         if (!aodStyleOverridden) {
             aodStyle = AodStyleSettings.getStyle(getContext());
+            aodPosition = AodStyleSettings.getPositions(getContext())[aodStyle];
         }
         ensureAodClock();
-        if (aodClock != null) {
-            aodClock.setAodVisualStyle(aodStyle);
-        }
+        syncAodStyle();
         String fresh = photoForScene();
         photoName = fresh;
         if (renderer != null) {
-            renderer.setAodStyle(aodStyle);
             syncPreviewPhotos();
         }
         Bitmap fallback = staticFallback();
@@ -311,7 +352,7 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
         String comp = activeDynamicComponent();
         if (comp != null) {
             android.graphics.drawable.Drawable d =
-                    LibraryActivity.thumbnailFor(getContext(), comp);
+                    DynamicWallpapers.thumbnailFor(getContext(), comp);
             Bitmap bmp = LivePreview.toBitmap(d);
             if (bmp != null) {
                 still.setImageBitmap(bmp);
@@ -330,7 +371,7 @@ final class LivePreviewView extends FrameLayout implements TextureView.SurfaceTe
         }
         surface = new Surface(st);
         renderer = new LensRenderer(getContext(), surface);
-        renderer.setAodStyle(aodStyle);
+        syncAodStyle();
         photoName = photoForScene();
         syncPreviewPhotos();
         // 首次落位一律用静稳态：熄屏靠 speed=1 持续自转，但不重播入场动画

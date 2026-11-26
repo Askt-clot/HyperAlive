@@ -3,16 +3,16 @@ package com.hyperalive.aod.hook;
 import android.os.SystemClock;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 
 import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
 
 /**
  * system_server 核心拦截管线：
  * 统管特权权限放行、壁纸静默篡改拦截、电源事件前馈、灭屏黑闪重定向及 Xiaomi Greezer 防冻结。
  */
 public final class SystemServerHook {
+
+    private static final int PRIMARY_POWER_GROUP_ID = 0;
 
     private static final ThreadLocal<Boolean> sBindingSelf = new ThreadLocal<Boolean>() {
         @Override protected Boolean initialValue() { return Boolean.FALSE; }
@@ -24,8 +24,7 @@ public final class SystemServerHook {
         HookUtils.log("开始安装 system_server hooks...");
         HookUtils.propSet("sys.qihang.lsp_active", "1");
         HookUtils.propSet(StateCoordinator.PROP_WP_ACTIVE, "0");
-        hookPowerAodSignal(cl);
-        hookPrimaryDisplaySleep(cl);
+        hookPrimaryDisplayWakefulness(cl);
         hookGreezer(cl);
         hookWallpaperCommands(cl);
 
@@ -176,6 +175,7 @@ public final class SystemServerHook {
                         if (NativeOnAodRampCoordinator.handleSetScreenState(param, state)) {
                             return;
                         }
+                        if (!NativeOnAodRampCoordinator.isPrimaryDisplayComponent(param.thisObject)) return;
                         if (!StateCoordinator.isAodPolicyActiveFast()) return;
                         long elapsed = SystemClock.uptimeMillis() - StateCoordinator.sSleepAtMs;
                         if (state == 1 && StateCoordinator.sAsleep && elapsed >= 0 && elapsed < 1500L) {
@@ -196,6 +196,7 @@ public final class SystemServerHook {
                 if (NativeOnAodRampCoordinator.handlePrepareColorFade(param)) {
                     return;
                 }
+                if (!NativeOnAodRampCoordinator.isPrimaryDisplayComponent(param.thisObject)) return;
                 if (!StateCoordinator.isAodPolicyActiveFast()) return;
                 long elapsed = SystemClock.uptimeMillis() - StateCoordinator.sSleepAtMs;
                 if (StateCoordinator.sAsleep && elapsed >= 0 && elapsed < 1500L) {
@@ -270,89 +271,40 @@ public final class SystemServerHook {
         return uid == sSystemUiUid;
     }
 
-    private static void hookPrimaryDisplaySleep(ClassLoader cl) {
-        // Inactivity timeout changes PowerGroup wakefulness directly, bypassing goToSleep.
-        // Arm the existing transition before PowerGroup notifies the display controller.
+    private static void hookPrimaryDisplayWakefulness(ClassLoader cl) {
+        // The rear screen can wake and sleep independently. Use the primary group's
+        // actual transition before its listener updates the display and SystemUI.
         HookUtils.hookMethod(HookUtils.findClass("com.android.server.power.PowerGroup", cl),
                 "setWakefulnessLocked", new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam param) {
-                int next = (Integer) param.args[0];
                 Object groupId = HookUtils.getField(param.thisObject, "mGroupId");
-                if (Integer.valueOf(0).equals(groupId) && next == 1) {
+                if (!Integer.valueOf(PRIMARY_POWER_GROUP_ID).equals(groupId)) return;
+                int next = (Integer) param.args[0];
+                Object previous = HookUtils.getField(param.thisObject, "mWakefulness");
+                if (!(previous instanceof Integer) || previous.equals(next)) return;
+                if (next == 1) {
                     NativeOnAodRampCoordinator.onPowerWakeSignal("PowerGroup_awake");
+                    boolean biometric = isBiometricWake((Integer) param.args[3], (String) param.args[6]);
+                    StateCoordinator.onPrimaryDisplayAwake(biometric);
                     return;
                 }
-                if (!StateCoordinator.isLockWallpaperActiveFast()) return;
                 if (next != 0 && next != 3) return; // ASLEEP / DOZING
-                Object previous = HookUtils.getField(param.thisObject, "mWakefulness");
-                if (Integer.valueOf(0).equals(groupId)
-                        && (Integer.valueOf(1).equals(previous) || Integer.valueOf(2).equals(previous))) {
-                    StateCoordinator.onSleepIntent("PowerGroup reason=" + param.args[3]);
-                    NativeOnAodRampCoordinator.onPowerSleepSignal("PowerGroup");
+                if (Integer.valueOf(1).equals(previous) || Integer.valueOf(2).equals(previous)) {
+                    StateCoordinator.cancelPrimaryWakeRecovery();
+                    if (StateCoordinator.isLockWallpaperActiveFast()) {
+                        StateCoordinator.onSleepIntent("PowerGroup reason=" + param.args[3]);
+                        NativeOnAodRampCoordinator.onPowerSleepSignal("PowerGroup");
+                    }
                 }
             }
         }, int.class, long.class, int.class, int.class, int.class, String.class, String.class);
     }
 
-    private static void hookPowerAodSignal(ClassLoader cl) {
-        XC_MethodHook cb = new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) {
-                String n = p.method.getName();
-                if (n.startsWith("wakeUp") || n.startsWith("wakePowerGroup")) {
-                    NativeOnAodRampCoordinator.onPowerWakeSignal(n);
-                }
-                if (!StateCoordinator.isLockWallpaperActiveFast()) return;
-                if (n.startsWith("goToSleep")) {
-                    StateCoordinator.onSleepIntent("goToSleep");
-                    NativeOnAodRampCoordinator.onPowerSleepSignal("goToSleep");
-                } else if (n.startsWith("wakeUp") || n.startsWith("wakePowerGroup")) {
-                    boolean isBiometric = false;
-                    if (p.args != null) {
-                        for (Object arg : p.args) {
-                            if (arg instanceof String) {
-                                String s = ((String) arg).toLowerCase();
-                                if (s.contains("biometric") || s.contains("fingerprint")) {
-                                    isBiometric = true;
-                                    break;
-                                }
-                            }
-                            if (arg instanceof Integer && ((Integer) arg) == 17) {
-                                isBiometric = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (isBiometric) {
-                        HookUtils.log("电源前馈：指纹唤醒 (BIOMETRIC) → 广播 mode=2 (HOME)");
-                        StateCoordinator.onBiometricWakeIntent();
-                        NativeOnAodRampCoordinator.onPowerWakeSignal("biometric");
-                    } else {
-                        HookUtils.log("电源前馈：正常唤醒 (wakeUp) → 广播 mode=1 (LOCK)");
-                        StateCoordinator.onWakeIntent();
-                        NativeOnAodRampCoordinator.onPowerWakeSignal("wakeUp");
-                    }
-                }
-            }
-        };
-
-        for (String clsName : new String[]{
-                "com.android.server.power.PowerManagerService",
-                "com.android.server.power.PowerManagerService$BinderService"
-        }) {
-            try {
-                Class<?> pm = Class.forName(clsName, false, cl);
-                for (Method m : pm.getDeclaredMethods()) {
-                    String name = m.getName();
-                    if (name.startsWith("goToSleep") || name.startsWith("wakeUp") || name.startsWith("wakePowerGroup")) {
-                        m.setAccessible(true);
-                        XposedBridge.hookMethod(m, cb);
-                    }
-                }
-            } catch (Throwable t) {
-                HookUtils.log("hookPowerAodSignal 挂载 " + clsName + " 失败: " + t);
-            }
-        }
+    private static boolean isBiometricWake(int reason, String details) {
+        if (reason == 17) return true; // WAKE_REASON_BIOMETRIC
+        if (details == null) return false;
+        String normalizedDetails = details.toLowerCase(java.util.Locale.ROOT);
+        return normalizedDetails.contains("biometric") || normalizedDetails.contains("fingerprint");
     }
 
     private static void hookGreezer(ClassLoader cl) {

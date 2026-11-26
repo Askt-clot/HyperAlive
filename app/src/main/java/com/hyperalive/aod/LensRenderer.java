@@ -67,6 +67,32 @@ final class LensRenderer implements Runnable {
     private volatile int pendingSeekFrom = -1;
     private volatile int pendingSeekTo = Motion.LOCK;
     private volatile long pendingSeekElapsedMs;
+    private long pendingLockWake;
+    private long pendingHandoffNanos;
+    private static volatile SailLockOpening lastSailLockOpening;
+
+    /** Immutable opening state shared by the two wallpaper GL threads. */
+    private static final class SailLockOpening {
+        final long wake;
+        final int width;
+        final int height;
+        final int styles;
+        final int position;
+        final Motion motion;
+        final PhotoTextureMotion textures = new PhotoTextureMotion();
+
+        SailLockOpening(long wake, int width, int height, int styles, int position,
+                        Motion source, PhotoTextureMotion textureSource) {
+            this.wake = wake;
+            this.width = width;
+            this.height = height;
+            this.styles = styles;
+            this.position = position;
+            motion = new Motion(width, height);
+            motion.copyFrom(source);
+            textures.copyFrom(textureSource);
+        }
+    }
     private volatile boolean pendingPhotoReload;
     private volatile boolean pendingPhotoReloadForce;
     private volatile boolean pendingPhotoReloadAfterRecovery;
@@ -83,8 +109,10 @@ final class LensRenderer implements Runnable {
     private int uDecoratorMatrix;
     private int uTextureMatrix;
     private int uPhoto;
+    private int uLockPhoto;
     private int uHomePhoto;
-    private int uHomeRatio;
+    private int uSplitSurfaces;
+    private int uSceneRatio;
     private int uDecorator;
     private int uTranslation;
     private int uLensScale;
@@ -105,13 +133,18 @@ final class LensRenderer implements Runnable {
 
     private volatile int aodStyle = AodStyleSettings.STYLE_SET_SAIL;
     private volatile int requestedAodStyle = AodStyleSettings.STYLE_SET_SAIL;
+    private volatile int requestedAodPosition;
+    private int aodPosition;
     private LiuguangPipeline liuguangPipeline;
+    private volatile int photoTextureStyles;
+    private final PhotoTextureMotion photoTextureMotion = new PhotoTextureMotion();
+    private PhotoTexturePipeline photoTexturePipeline;
     private final Runnable styleListener = new Runnable() {
         @Override
         public void run() {
             if (previewSurface == null) {
                 int latest = AodStyleSettings.getStyle(appContext);
-                setAodStyle(latest);
+                setCommittedAodStyle(latest);
             }
         }
     };
@@ -124,9 +157,14 @@ final class LensRenderer implements Runnable {
     private String previewHomePhoto;
     /** 预览专用：留光相框照片源（PhotoStore.FRAME 或草稿路径）；null = PhotoStore.FRAME。 */
     private String previewFramePhoto;
-    /** 预览专用：>0 时使用 OpenAlive 的 WallpaperRenderer 实时渲染魅族动态壁纸三态。 */
-    private volatile int previewVariant;
+    /** 内置动态壁纸编号，0 表示使用自定义照片。 */
+    private volatile int dynamicVariant;
+    private boolean dynamicVisible;
+    private final java.util.concurrent.atomic.AtomicBoolean dynamicFrameReady =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private int activeVariant;
+    private int activeDynamicMode;
+    private long pendingModeAtNanos;
     private WallpaperRenderer dynamicRenderer;
     private StereoSensor stereoSensor;
     private android.os.HandlerThread sensorThread;
@@ -180,6 +218,7 @@ final class LensRenderer implements Runnable {
         int initStyle = AodStyleSettings.getStyle(this.appContext);
         this.aodStyle = initStyle;
         this.requestedAodStyle = initStyle;
+        this.requestedAodPosition = AodStyleSettings.getPositions(this.appContext)[initStyle];
         if (homeSlot) {
             this.pendingMode = Motion.HOME;
             this.pendingAnimate = false;
@@ -198,6 +237,7 @@ final class LensRenderer implements Runnable {
             } catch (Throwable ignored) {}
         }
         this.thread = new Thread(this, homeSlot ? "QihangGL-Home" : "QihangGL-Lock");
+        this.photoTextureStyles = PhotoTextureSettings.get(this.appContext);
     }
 
     /**
@@ -223,33 +263,50 @@ final class LensRenderer implements Runnable {
     }
 
     void setMode(int mode, boolean animate) {
-        pendingMode = mode;
-        pendingAnimate = animate;
-        pendingContinue = false;
-        pendingSeekFrom = -1;
-        pendingForceLockBeforeHome = false;
-        pendingDirty = true;
+        setMode(mode, animate, 0);
+    }
+
+    void setMode(int mode, boolean animate, long lockWake) {
+        synchronized (lock) {
+            pendingMode = mode;
+            pendingModeAtNanos = System.nanoTime();
+            pendingAnimate = animate;
+            pendingContinue = false;
+            pendingSeekFrom = -1;
+            pendingForceLockBeforeHome = false;
+            pendingLockWake = lockWake;
+            pendingHandoffNanos = 0;
+            pendingDirty = true;
+        }
         wake();
     }
 
     /** 锁屏扩散已播完后解锁到独立桌面壁纸：先对齐到 LOCK 全屏稳态，再播 500ms tr4 交叉渐变到 HOME。 */
     void transitionLockToHome() {
-        pendingMode = Motion.HOME;
-        pendingAnimate = true;
-        pendingContinue = false;
-        pendingSeekFrom = -1;
-        pendingForceLockBeforeHome = true;
-        pendingDirty = true;
+        synchronized (lock) {
+            pendingMode = Motion.HOME;
+            pendingAnimate = true;
+            pendingContinue = false;
+            pendingSeekFrom = -1;
+            pendingForceLockBeforeHome = true;
+            pendingLockWake = 0;
+            pendingHandoffNanos = 0;
+            pendingDirty = true;
+        }
         wake();
     }
 
     /** 从当前进度接着跑到 mode（不重启动画）。 */
-    void continueTo(int mode) {
-        pendingMode = mode;
-        pendingSeekFrom = -1;
-        pendingForceLockBeforeHome = false;
-        pendingContinue = true;
-        pendingDirty = true;
+    void continueTo(int mode, long handoffNanos) {
+        synchronized (lock) {
+            pendingMode = mode;
+            pendingSeekFrom = -1;
+            pendingForceLockBeforeHome = false;
+            pendingContinue = true;
+            pendingLockWake = 0;
+            pendingHandoffNanos = handoffNanos;
+            pendingDirty = true;
+        }
         wake();
     }
 
@@ -261,14 +318,18 @@ final class LensRenderer implements Runnable {
      * 先把状态对齐到「{@code from}→{@code to} 已播 {@code elapsedMs}」，再续跑到 {@code mode}。
      * 桌面 Engine 在锁屏期间不渲染、没有进度，靠它接手锁屏侧已播的那一段。
      */
-    void seekThenContinue(int from, int to, long elapsedMs, int mode) {
-        pendingMode = mode;
-        pendingSeekFrom = from;
-        pendingSeekTo = to;
-        pendingSeekElapsedMs = elapsedMs;
-        pendingForceLockBeforeHome = false;
-        pendingContinue = true;
-        pendingDirty = true;
+    void seekThenContinue(int from, int to, long elapsedMs, int mode, long lockWake, long handoffNanos) {
+        synchronized (lock) {
+            pendingMode = mode;
+            pendingSeekFrom = from;
+            pendingSeekTo = to;
+            pendingSeekElapsedMs = elapsedMs;
+            pendingForceLockBeforeHome = false;
+            pendingContinue = true;
+            pendingLockWake = lockWake;
+            pendingHandoffNanos = handoffNanos;
+            pendingDirty = true;
+        }
         wake();
     }
 
@@ -319,19 +380,40 @@ final class LensRenderer implements Runnable {
         }
     }
 
-    /** 预览用：设置魅族动态壁纸的 OpenAlive variant ID（0 = 使用启航自定义照片管线）。 */
-    void setPreviewVariant(int variant) {
-        if (previewVariant != variant) {
-            previewVariant = variant;
+    void setDynamicVariant(int variant) {
+        synchronized (lock) {
+            if (dynamicVariant == variant) return;
+            dynamicVariant = variant;
             pendingDirty = true;
-            wake();
         }
+        wake();
+    }
+
+    private boolean shouldShowDynamic() {
+        return shouldShowDynamic(pendingMode);
+    }
+
+    private boolean shouldShowDynamic(int mode) {
+        return TransitionPolicy.runDynamicWallpaper(
+                mode, previewSurface != null, homeSlot, visible, fodVisible);
+    }
+
+    private boolean keepsHiddenHomeSceneTime() {
+        return previewSurface == null && activeDynamicMode == Motion.HOME;
+    }
+
+    private boolean dynamicNeedsFrames() {
+        return dynamicRenderer != null && dynamicVisible
+                && (dynamicRenderer.hasAmbientMotion() || dynamicRenderer.motion().active());
+    }
+
+    private void requestDynamicFrame() {
+        dynamicFrameReady.set(true);
+        wake();
     }
 
     static int normalizeAodStyle(int style) {
-        return (style == AodStyleSettings.STYLE_LEAVE_LIGHT) ? AodStyleSettings.STYLE_LEAVE_LIGHT
-                : (style == AodStyleSettings.STYLE_MOON) ? AodStyleSettings.STYLE_MOON
-                : AodStyleSettings.STYLE_SET_SAIL;
+        return AodStyleSettings.normalizeStyle(style);
     }
 
     void setAodStyle(int style) {
@@ -343,6 +425,19 @@ final class LensRenderer implements Runnable {
         }
     }
 
+    void setCommittedAodStyle(int style) {
+        int norm = normalizeAodStyle(style);
+        setAodStyle(norm);
+        setAodPosition(AodStyleSettings.getPositions(appContext)[norm]);
+    }
+
+    void setAodPosition(int position) {
+        if (requestedAodPosition == position) return;
+        requestedAodPosition = position;
+        pendingDirty = true;
+        wake();
+    }
+
     private void syncRequestedAodStyleOnGlThread() {
         int targetStyle = requestedAodStyle;
         if (aodStyle != targetStyle) {
@@ -350,29 +445,48 @@ final class LensRenderer implements Runnable {
             if (motion != null) {
                 motion.setAodStyle(targetStyle);
             }
-            if (liuguangPipeline != null && (targetStyle == AodStyleSettings.STYLE_LEAVE_LIGHT
-                    || targetStyle == AodStyleSettings.STYLE_MOON)) {
-                liuguangPipeline.setStyle(targetStyle);
+            if (liuguangPipeline != null) {
+                if (targetStyle == AodStyleSettings.STYLE_SET_SAIL) {
+                    liuguangPipeline.release();
+                    liuguangPipeline = null;
+                } else {
+                    liuguangPipeline.setStyle(targetStyle);
+                }
             }
             blurAppliedLast = false;
         } else if (motion != null) {
             motion.setAodStyle(targetStyle);
         }
+        aodPosition = requestedAodPosition;
+        syncAodPositionOnMotion();
+    }
+
+    private void syncAodPositionOnMotion() {
+        if (motion == null) return;
+        motion.setAodPosition(AodStyleSettings.positionX(aodPosition),
+                AodStyleSettings.positionY(aodPosition));
     }
 
     void requestPhotoReload() {
+        if (previewSurface == null) setPhotoTextureStyles(PhotoTextureSettings.get(appContext));
         pendingPhotoReload = true;
         wake();
     }
 
     void requestPhotoReloadForce() {
+        if (previewSurface == null) setPhotoTextureStyles(PhotoTextureSettings.get(appContext));
         pendingPhotoReloadForce = true;
         wake();
     }
 
     void postReloadAfterRecovery() {
         pendingPhotoReloadAfterRecovery = true;
-        pendingPhotoReloadForce = true;
+        requestPhotoReloadForce();
+    }
+
+    void setPhotoTextureStyles(int selection) {
+        if (photoTextureStyles == selection) return;
+        photoTextureStyles = selection;
         wake();
     }
 
@@ -424,11 +538,16 @@ final class LensRenderer implements Runnable {
                 }
                 Surface surface = previewSurface != null ? previewSurface : holder.getSurface();
                 boolean ok = surface != null && surface.isValid();
+                if (!ok && dynamicVisible) {
+                    dynamicVisible = false;
+                    dynamicRenderer.visible(false);
+                    dynamicRenderer.motion().pause(!keepsHiddenHomeSceneTime());
+                    if (stereoSensor != null) stereoSensor.setActive(false);
+                }
                 // 1) 只要有新指令 (pendingDirty) 或过渡动画正在进行 (motion.animating())，
                 //    对于当前可见槽位或锁屏/AOD 槽位 (!homeSlot)，必须立刻渲染并出帧；
                 // 2) 若是桌面槽位 (homeSlot) 且当前不可见 (!visible) 且目标是 AOD，
                 //    无需在后台不可见时逐帧渲染高斯模糊抢占锁屏槽 GPU，直接走 else 分支对齐状态即可。
-                boolean dynActive = previewVariant > 0 && (!homeSlot || visible);
                 // AOD 连续自转帧率仅属于锁屏槽（!homeSlot 或预览），且当屏下指纹图标亮起时维持自转：
                 // 1) 桌面槽在 AOD 期间完全被锁屏图层遮挡，收缩动画结束后不应在后台持续自转消耗 GPU；
                 // 2) 息屏期间指纹图标一旦消失，立即停止自转并省电休眠，指纹图标重新亮起时恢复 120 FPS 渲染。
@@ -437,29 +556,28 @@ final class LensRenderer implements Runnable {
                         && fodVisible
                         && motion != null
                         && motion.needsContinuousFrames();
-                boolean needDraw = visible
-                        || pendingDirty
-                        || (motion != null && motion.animating())
-                        || isAodContinuous
-                        || dynActive
-                        || (dynamicRenderer != null && dynamicRenderer.motion().active());
+                boolean needDraw = dynamicVariant > 0
+                        ? pendingDirty || dynamicVisible != shouldShowDynamic()
+                                || dynamicNeedsFrames() || dynamicFrameReady.getAndSet(false)
+                        : visible || pendingDirty || (motion != null && motion.animating())
+                                || (!homeSlot && photoTextureMotion.active()) || isAodContinuous;
                 if (ok && needDraw) {
                     try {
-                        drawFrame(frameStartNanos);
-                        drewFrame = true;
+                        boolean rendered = drawFrame(frameStartNanos);
                         updateSurfaceFrameRateHint(surface);
-                        countTransitionFrames(frameStartNanos);
-                        countAodFrames(frameStartNanos);
-                        if (previewSurface != null) {
-                            logPreview(System.nanoTime());
-                        }
-                        if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
-                            Log.w(TAG, "eglSwapBuffers 失败 0x" + Integer.toHexString(EGL14.eglGetError()));
+                        if (rendered) {
+                            drewFrame = true;
+                            countTransitionFrames(frameStartNanos);
+                            countAodFrames(frameStartNanos);
+                            if (previewSurface != null) logPreview(System.nanoTime());
+                            if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
+                                Log.w(TAG, "eglSwapBuffers 失败 0x" + Integer.toHexString(EGL14.eglGetError()));
+                            }
                         }
                     } catch (Throwable t) {
                         Log.e(TAG, "drawFrame 异常 (跳过该帧保持渲染线程存活)", t);
                     }
-                } else if (motion != null && previewVariant <= 0) {
+                } else if (motion != null && dynamicVariant == 0) {
                     syncRequestedAodStyleOnGlThread();
                     applyPendingMode();
                     long now = System.nanoTime();
@@ -499,8 +617,8 @@ final class LensRenderer implements Runnable {
     }
 
     private boolean isHighRateActive() {
-        if (previewVariant > 0 && (!homeSlot || visible)) {
-            return true;
+        if (dynamicVariant > 0) {
+            return dynamicNeedsFrames();
         }
         if (motion != null && motion.animating()) {
             return true;
@@ -522,8 +640,8 @@ final class LensRenderer implements Runnable {
         if (pendingDirty) {
             return;
         }
-        boolean inTransition = (motion != null && motion.animating())
-                || (dynamicRenderer != null && dynamicRenderer.motion().active());
+        boolean inTransition = dynamicVariant > 0
+                ? dynamicNeedsFrames() : (motion != null && motion.animating()) || photoTextureMotion.active();
         if (inTransition) {
             refreshFramePacingIfNeeded();
             long spentNanos = System.nanoTime() - frameStartNanos;
@@ -594,7 +712,7 @@ final class LensRenderer implements Runnable {
 
     /** 当前实际运动引擎模式。若有新指令待处理，优先返回 pendingMode。 */
     int currentMotionMode() {
-        return pendingDirty ? pendingMode : (motion != null ? motion.mode : pendingMode);
+        return pendingDirty || dynamicVariant > 0 || motion == null ? pendingMode : motion.mode;
     }
 
     Motion motion() {
@@ -696,10 +814,7 @@ final class LensRenderer implements Runnable {
         if (surface == null || !surface.isValid() || android.os.Build.VERSION.SDK_INT < 30) {
             return;
         }
-        boolean wantHigh = (motion != null && motion.animating())
-                || isHighRateActive()
-                || (dynamicRenderer != null && dynamicRenderer.motion().active())
-                || (previewVariant > 0 && (!homeSlot || visible));
+        boolean wantHigh = isHighRateActive();
         if (wantHigh == highFrameRateRequested) {
             return;
         }
@@ -736,7 +851,8 @@ final class LensRenderer implements Runnable {
     private int aodFpsFrames;
 
     private void countAodFrames(long nowNanos) {
-        if (!isHighRateActive()) {
+        boolean dynamic = dynamicVariant > 0;
+        if ((dynamic && pendingMode != Motion.AOD) || !isHighRateActive()) {
             aodFpsStartNanos = 0;
             aodFpsFrames = 0;
             return;
@@ -750,7 +866,8 @@ final class LensRenderer implements Runnable {
         if (elapsed >= 2_000_000_000L) {
             float fps = aodFpsFrames * 1_000_000_000f / elapsed;
             Log.i(TAG, (previewSurface != null ? "[预览]" : (homeSlot ? "[桌面槽]" : "[锁屏槽]"))
-                    + " AOD自转帧率=" + String.format(java.util.Locale.US, "%.1f", fps)
+                    + (dynamic ? " 动态壁纸 AOD自转帧率=" : " AOD自转帧率=")
+                    + String.format(java.util.Locale.US, "%.1f", fps)
                     + "fps（目标=" + targetRefreshHz + "Hz）");
             aodFpsStartNanos = nowNanos;
             aodFpsFrames = 0;
@@ -761,29 +878,65 @@ final class LensRenderer implements Runnable {
         if (motion == null) {
             return; // surface 尺寸还没拿到，第一帧时再建
         }
-        // 只有「新请求」才重新起动画；否则每帧重设会把 animStart 一直推后，动画永不推进
-        if (!pendingDirty) {
-            return;
-        }
-        pendingDirty = false;
-        long now = System.nanoTime();
-        if (pendingForceLockBeforeHome) {
+        final int mode, seekFrom, seekTo;
+        final long elapsedMs, lockWake, handoffNanos;
+        final boolean animate, continueMotion, forceLock;
+        synchronized (lock) {
+            if (!pendingDirty) return;
+            mode = pendingMode;
+            animate = pendingAnimate;
+            continueMotion = pendingContinue;
+            forceLock = pendingForceLockBeforeHome;
+            seekFrom = pendingSeekFrom;
+            seekTo = pendingSeekTo;
+            elapsedMs = pendingSeekElapsedMs;
+            lockWake = pendingLockWake;
+            handoffNanos = pendingHandoffNanos;
+            pendingDirty = false;
+            pendingContinue = false;
             pendingForceLockBeforeHome = false;
+            pendingSeekFrom = -1;
+            pendingLockWake = 0;
+            pendingHandoffNanos = 0;
+        }
+        long now = System.nanoTime();
+        boolean splitSail = motion.hasIndependentSailSurfaces();
+        long sampleTime = splitSail && handoffNanos > 0 ? handoffNanos : now;
+        if (forceLock) {
             motion.setMode(Motion.LOCK, false, now);
             motion.setMode(Motion.HOME, true, now);
             return;
         }
-        if (pendingSeekFrom >= 0) {
-            // 桌面 Engine 接手锁屏侧已播的扩散：先对齐进度，再续跑到目标态
-            motion.seekTransition(pendingSeekFrom, pendingSeekTo, pendingSeekElapsedMs, now);
-            pendingSeekFrom = -1;
+        if (seekFrom >= 0) {
+            SailLockOpening opening = lastSailLockOpening;
+            int styles = photoTextureStyles;
+            if (splitSail && opening != null && opening.wake == lockWake
+                    && opening.width == surfaceWidth && opening.height == surfaceHeight
+                    && opening.styles == styles && opening.position == aodPosition) {
+                motion.copyFrom(opening.motion);
+                photoTextureMotion.copyFrom(opening.textures);
+                Log.i(TAG, "启航桌面接手：复用锁屏扩散与纹理起帧");
+            } else {
+                motion.seekTransition(seekFrom, seekTo, elapsedMs, sampleTime);
+                if (splitSail && seekFrom == Motion.AOD && seekTo == Motion.LOCK) {
+                    photoTextureMotion.seekLockOpening(styles,
+                            sampleTime - elapsedMs * 1_000_000L, sampleTime);
+                    Log.i(TAG, "启航桌面接手：按锁屏时间补齐扩散与纹理进度");
+                }
+            }
         }
-        if (pendingContinue) {
-            pendingContinue = false;
-            motion.continueTo(pendingMode, now);
+        if (continueMotion) {
+            motion.continueTo(mode, sampleTime);
+            if (splitSail) photoTextureMotion.update(photoTextureStyles, mode, true, sampleTime);
         } else {
-            boolean anim = pendingAnimate;
-            motion.setMode(pendingMode, anim, now);
+            motion.setMode(mode, animate, now);
+            if (splitSail && lockWake > 0 && mode == Motion.LOCK
+                    && motion.animating() && motion.lastTransition() == 0) {
+                int styles = photoTextureStyles;
+                photoTextureMotion.update(styles, mode, animate, now);
+                lastSailLockOpening = new SailLockOpening(lockWake, surfaceWidth, surfaceHeight,
+                        styles, aodPosition, motion, photoTextureMotion);
+            }
         }
     }
 
@@ -874,8 +1027,10 @@ final class LensRenderer implements Runnable {
         uDecoratorMatrix = GLES30.glGetUniformLocation(program, "u_decorator_matrix");
         uTextureMatrix = GLES30.glGetUniformLocation(program, "u_texture_matrix");
         uPhoto = GLES30.glGetUniformLocation(program, "u_photo");
+        uLockPhoto = GLES30.glGetUniformLocation(program, "u_lock_photo");
         uHomePhoto = GLES30.glGetUniformLocation(program, "u_home_photo");
-        uHomeRatio = GLES30.glGetUniformLocation(program, "u_home_ratio");
+        uSplitSurfaces = GLES30.glGetUniformLocation(program, "u_split_surfaces");
+        uSceneRatio = GLES30.glGetUniformLocation(program, "u_scene_ratio");
         uDecorator = GLES30.glGetUniformLocation(program, "u_lens_decorator");
         uTranslation = GLES30.glGetUniformLocation(program, "u_translation");
         uLensScale = GLES30.glGetUniformLocation(program, "u_lens_scale");
@@ -896,12 +1051,12 @@ final class LensRenderer implements Runnable {
         return true;
     }
 
-    private void drawFrame(long nowNanos) {
+    private boolean drawFrame(long nowNanos) {
         int[] size = new int[2];
         EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_WIDTH, size, 0);
         EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_HEIGHT, size, 1);
         if (size[0] <= 0 || size[1] <= 0) {
-            return;
+            return false;
         }
         syncRequestedAodStyleOnGlThread();
         boolean sizeChanged = size[0] != surfaceWidth || size[1] != surfaceHeight;
@@ -915,59 +1070,82 @@ final class LensRenderer implements Runnable {
                 motion.copyFrom(oldMotion);
                 motion.setAodStyle(aodStyle);
             } else {
+                syncAodPositionOnMotion();
                 motion.setMode(pendingMode, false, nowNanos);
             }
             photoDirty = true;
         }
         syncRequestedAodStyleOnGlThread();
-        int wantVariant = previewVariant;
+        int wantVariant = dynamicVariant;
         if (wantVariant > 0) {
-            drawDynamicFrame(wantVariant, sizeChanged, nowNanos);
-            return;
+            return drawDynamicFrame(wantVariant, sizeChanged, nowNanos);
         } else if (dynamicRenderer != null) {
             closeDynamicRenderer();
         }
         if (motion == null) {
-            return;
+            return false;
         }
-        applyPendingMode();
         if (photoDirty) {
             photoDirty = false;
             loadWallpaperTexture(surfaceWidth, surfaceHeight);
+            if (photoTexturePipeline != null) photoTexturePipeline.invalidate();
         }
 
+        int styles = photoTextureStyles;
+        boolean independentSailSurfaces = aodStyle == AodStyleSettings.STYLE_SET_SAIL
+                && (homeWallpaperTexture != 0 || PhotoTextureSettings.hasIndependentStyles(styles));
+        motion.setIndependentSailSurfaces(independentSailSurfaces);
+        applyPendingMode();
         motion.advance(nowNanos);
         transitionRunning = motion.animating();
+        int lockTex = wallpaperTexture;
+        int homeTex = homeWallpaperTexture != 0 ? homeWallpaperTexture : wallpaperTexture;
+        photoTextureMotion.update(styles, motion.mode, motion.animating(), nowNanos);
+        if (styles != PhotoTextureSettings.NONE) {
+            if (photoTexturePipeline == null) {
+                photoTexturePipeline = new PhotoTexturePipeline(appContext.getAssets());
+            }
+            lockTex = photoTexturePipeline.render(lockTex, photoTextureMotion.lock,
+                    surfaceWidth, surfaceHeight, false);
+            if (motion.mode == Motion.HOME || motion.homeRatio() > 0f) {
+                if (photoTextureMotion.home == photoTextureMotion.lock && homeTex == wallpaperTexture) {
+                    homeTex = lockTex;
+                } else {
+                    homeTex = photoTexturePipeline.render(homeTex, photoTextureMotion.home,
+                            surfaceWidth, surfaceHeight, true);
+                }
+            }
+        }
 
-        if (aodStyle == AodStyleSettings.STYLE_LEAVE_LIGHT || aodStyle == AodStyleSettings.STYLE_MOON) {
+        PhotoMaskStyle maskStyle = PhotoMaskStyle.forId(aodStyle);
+        if (maskStyle != null) {
             if (liuguangPipeline == null) {
                 liuguangPipeline = new LiuguangPipeline(appContext, aodStyle);
-            } else {
-                liuguangPipeline.setStyle(aodStyle);
             }
-            int photoTex = wallpaperTexture;
+            int photoTex = lockTex;
             float blurRadius = motion.frameBlur();
-            boolean blurNow = blurRadius >= 2f && aodLayerVisible();
-            if (aodStyle == AodStyleSettings.STYLE_MOON && blurNow) {
+            boolean allowBlur = aodStyle >= AodStyleSettings.STYLE_DOOR
+                    ? motion.ratio[Motion.AOD] > 0f : aodLayerVisible();
+            boolean blurNow = blurRadius >= 2f && allowBlur;
+            if (maskStyle.blur > 0f && blurNow) {
                 if (gaussianBlur == null) {
                     gaussianBlur = new GaussianBlur();
                 }
                 gaussianBlur.ensure(appContext, surfaceWidth, surfaceHeight);
-                photoTex = gaussianBlur.blur(wallpaperTexture, blurRadius);
+                photoTex = gaussianBlur.blur(lockTex, blurRadius);
             }
-            int homeTex = homeWallpaperTexture != 0 ? homeWallpaperTexture : wallpaperTexture;
             int frameTex = frameWallpaperTexture != 0 ? frameWallpaperTexture : wallpaperTexture;
-            liuguangPipeline.render(photoTex, homeTex, frameTex, motion.homeRatio(), motion, surfaceWidth, surfaceHeight, aodStyle);
+            if (!liuguangPipeline.render(photoTex, homeTex, frameTex, motion,
+                    surfaceWidth, surfaceHeight, aodStyle)) return false;
             long nowMs = nowNanos / 1_000_000L;
             if (nowMs - lastBeatMs > 10000) {
                 lastBeatMs = nowMs;
-                String tag = (aodStyle == AodStyleSettings.STYLE_MOON) ? "[星月]" : "[留光]";
                 Log.i(TAG, String.format(java.util.Locale.US,
-                        "%s draw mode=%d scale=%.3f rot=%.1f blur=%.1f micros=%d alpha=%.2f homeRatio=%.2f tr=%d anim=%s",
-                        tag, motion.mode, motion.frameScale(), motion.frameRotation(), motion.frameBlur(),
+                        "[%s] draw mode=%d scale=%.3f rot=%.1f blur=%.1f micros=%d alpha=%.2f homeRatio=%.2f tr=%d anim=%s",
+                        maskStyle.folder, motion.mode, motion.frameScale(), motion.frameRotation(), motion.frameBlur(),
                         motion.frameMicros(), motion.framePhotoAlpha(), motion.homeRatio(), motion.lastTransition(), motion.animating()));
             }
-            return;
+            return true;
         }
 
         GLES30.glViewport(0, 0, surfaceWidth, surfaceHeight);
@@ -977,8 +1155,9 @@ final class LensRenderer implements Runnable {
         // 只在"点亮息屏层"时做（熄屏稳态 + 过渡期间）；锁屏/桌面稳态不模糊（官方亦然）。
         // 之前用 mipmap LOD 近似，糊度与官方差一截，这里换成精确实现。
         float blurRadius = motion.blur();
-        int photoTex = wallpaperTexture;
-        boolean blurNow = blurRadius >= 2f && aodLayerVisible();
+        int photoTex = lockTex;
+        boolean blurNow = blurRadius >= 2f && (independentSailSurfaces
+                ? motion.ratio[Motion.AOD] >= 0.000001f : aodLayerVisible());
         if (blurNow != blurAppliedLast) {
             blurAppliedLast = blurNow;
             Log.i(TAG, "圆内模糊 " + (blurNow ? "on" : "off") + " blur=" + blurRadius
@@ -990,7 +1169,7 @@ final class LensRenderer implements Runnable {
                 gaussianBlur = new GaussianBlur();
             }
             gaussianBlur.ensure(appContext, surfaceWidth, surfaceHeight);
-            photoTex = gaussianBlur.blur(wallpaperTexture, blurRadius);
+            photoTex = gaussianBlur.blur(lockTex, blurRadius);
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
             GLES30.glViewport(0, 0, surfaceWidth, surfaceHeight);
         }
@@ -1005,14 +1184,19 @@ final class LensRenderer implements Runnable {
         GLES30.glTexParameterf(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAX_LOD, 0f);
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1);
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, decoratorTexture);
-        int homeTex = homeWallpaperTexture != 0 ? homeWallpaperTexture : wallpaperTexture;
         GLES30.glActiveTexture(GLES30.GL_TEXTURE2);
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, homeTex);
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE3);
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lockTex);
+        GLES30.glTexParameterf(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_LOD, 0f);
+        GLES30.glTexParameterf(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAX_LOD, 0f);
 
         GLES30.glUniform1i(uPhoto, 0);
         GLES30.glUniform1i(uDecorator, 1);
         GLES30.glUniform1i(uHomePhoto, 2);
-        GLES30.glUniform1f(uHomeRatio, homeWallpaperTexture != 0 ? motion.homeRatio() : 0f);
+        GLES30.glUniform1i(uLockPhoto, 3);
+        GLES30.glUniform1i(uSplitSurfaces, independentSailSurfaces ? 1 : 0);
+        GLES30.glUniform3fv(uSceneRatio, 1, motion.ratio, 0);
         GLES30.glUniformMatrix4fv(uProjectionView, 1, false, identity(), 0);
         GLES30.glUniformMatrix4fv(uTextureMatrix, 1, false, motion.photoMatrix, 0);
         GLES30.glUniformMatrix4fv(uDecoratorMatrix, 1, false, motion.decorMatrix, 0);
@@ -1055,6 +1239,7 @@ final class LensRenderer implements Runnable {
                     motion.ratio[0], motion.ratio[1], motion.ratio[2], motion.lastTransition(),
                     motion.animating()));
         }
+        return true;
     }
 
     private long lastBeatMs;
@@ -1206,6 +1391,7 @@ final class LensRenderer implements Runnable {
             if (previewPhoto == null) {
                 AodStyleSettings.resetCacheForTest();
                 requestedAodStyle = normalizeAodStyle(AodStyleSettings.getStyle(appContext));
+                requestedAodPosition = AodStyleSettings.getPositions(appContext)[requestedAodStyle];
                 syncRequestedAodStyleOnGlThread();
             }
         }
@@ -1298,8 +1484,19 @@ final class LensRenderer implements Runnable {
         return scaled;
     }
 
-    /** 使用 OpenAlive 的 WallpaperRenderer 实时渲染魅族 23 款动态壁纸三态与切换过渡。 */
-    private void drawDynamicFrame(int wantVariant, boolean sizeChanged, long nowNanos) {
+    private boolean drawDynamicFrame(int wantVariant, boolean sizeChanged, long nowNanos) {
+        final int targetMode;
+        final boolean animate;
+        final boolean modeChanged;
+        final long requestedAtNanos;
+        synchronized (lock) {
+            if (dynamicVariant != wantVariant) return false;
+            targetMode = pendingMode;
+            animate = pendingAnimate;
+            modeChanged = pendingDirty;
+            requestedAtNanos = pendingModeAtNanos;
+            pendingDirty = false;
+        }
         try {
             if (dynamicRenderer == null || activeVariant != wantVariant || sizeChanged) {
                 closeDynamicRenderer();
@@ -1308,46 +1505,70 @@ final class LensRenderer implements Runnable {
                         & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
                         == android.content.res.Configuration.UI_MODE_NIGHT_YES;
                 dynamicRenderer = WallpaperRenderer.create(appContext.getAssets(),
-                        activeVariant, dark, surfaceWidth, surfaceHeight, pendingMode, false, this::wake);
+                        activeVariant, dark, surfaceWidth, surfaceHeight, targetMode, false,
+                        this::requestDynamicFrame);
                 dynamicRenderer.motion().follow(0f, Motion.AOD_Y);
                 dynamicRenderer.continuous(true);
-                dynamicRenderer.visible(visible);
                 if (dynamicRenderer instanceof StereoRenderer) {
+                    StereoMotion stereoMotion = (StereoMotion) dynamicRenderer.motion();
                     sensorThread = new android.os.HandlerThread("QihangStereoGyro");
                     sensorThread.start();
                     stereoSensor = new StereoSensor(appContext,
                             new android.os.Handler(sensorThread.getLooper()),
                             (x, y, z, time) -> {
-                                WallpaperRenderer r = dynamicRenderer;
-                                if (r instanceof StereoRenderer) {
-                                    ((StereoMotion) r.motion()).gyroscope(x, y, z, time);
-                                    if (r.motion().active()) {
-                                        wake();
-                                    }
+                                stereoMotion.gyroscope(x, y, z, time);
+                                if (stereoMotion.active()) {
+                                    requestDynamicFrame();
                                 }
                             });
-                    stereoSensor.setActive(visible);
                 }
-                pendingDirty = false;
-                Log.i(TAG, "动态壁纸实时预览就绪 variant=" + activeVariant
-                        + " " + surfaceWidth + "x" + surfaceHeight + " mode=" + pendingMode);
+                Log.i(TAG, (previewSurface != null ? "[预览]" : "[系统]")
+                        + " 内置动态壁纸就绪 variant=" + activeVariant
+                        + " " + surfaceWidth + "x" + surfaceHeight + " mode=" + targetMode);
+            } else if (modeChanged) {
+                if (!dynamicVisible && keepsHiddenHomeSceneTime() && targetMode != Motion.HOME) {
+                    // When the foreground app hid the unlock, sleep still starts from HOME.
+                    dynamicRenderer.motion().finishScene();
+                }
+                dynamicRenderer.motion().change(targetMode, animate);
+                if (animate && previewSurface == null && targetMode == Motion.HOME
+                        && requestedAtNanos > 0L) {
+                    dynamicRenderer.motion().advanceScene(Math.min(requestedAtNanos, nowNanos));
+                }
+                Log.i(TAG, "内置动态壁纸切换 variant=" + activeVariant
+                        + " mode=" + targetMode + " animate=" + animate);
             }
-            if (pendingDirty) {
-                pendingDirty = false;
-                dynamicRenderer.motion().change(pendingMode, pendingAnimate);
-                dynamicRenderer.interaction();
+            activeDynamicMode = targetMode;
+            boolean wasVisible = dynamicVisible;
+            dynamicVisible = shouldShowDynamic(targetMode);
+            dynamicRenderer.visible(dynamicVisible);
+            if (wasVisible && !dynamicVisible) {
+                dynamicRenderer.motion().pause(!keepsHiddenHomeSceneTime());
             }
-            dynamicRenderer.visible(visible);
             if (stereoSensor != null) {
-                stereoSensor.setActive(visible);
+                stereoSensor.setActive(dynamicVisible);
             }
-            dynamicRenderer.motion().advance(nowNanos, 1f);
+            if (dynamicVisible) {
+                dynamicRenderer.motion().advance(nowNanos, 1f);
+            } else if (keepsHiddenHomeSceneTime()) {
+                // Anchor the timer even if the command arrives with the wallpaper already hidden.
+                dynamicRenderer.motion().advanceScene(nowNanos);
+            }
             dynamicRenderer.render();
-            transitionRunning = dynamicRenderer.motion().active();
+            transitionRunning = dynamicVisible && dynamicRenderer.motion().active();
+            return true;
         } catch (Throwable t) {
-            Log.e(TAG, "动态壁纸实时预览异常 variant=" + wantVariant, t);
+            Log.e(TAG, "内置动态壁纸渲染异常 variant=" + wantVariant, t);
             closeDynamicRenderer();
-            previewVariant = 0;
+            synchronized (lock) {
+                if (dynamicVariant == wantVariant) {
+                    dynamicVariant = 0;
+                    pendingAnimate = false;
+                    pendingDirty = true;
+                    photoDirty = true;
+                }
+            }
+            return false;
         }
     }
 
@@ -1374,12 +1595,18 @@ final class LensRenderer implements Runnable {
             dynamicRenderer = null;
         }
         activeVariant = 0;
+        dynamicVisible = false;
+        dynamicFrameReady.set(false);
     }
 
     // ---- 释放 ----
 
     private void releaseGl() {
         closeDynamicRenderer();
+        if (photoTexturePipeline != null) {
+            photoTexturePipeline.close();
+            photoTexturePipeline = null;
+        }
         if (liuguangPipeline != null) {
             liuguangPipeline.release();
             liuguangPipeline = null;

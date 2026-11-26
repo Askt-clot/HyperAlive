@@ -442,8 +442,7 @@ public final class NativeOnAodRampCoordinator {
     /**
      * Strict primary-scoped integration into SystemServerHook's {@code setScreenState} hook.
      * Returns {@code true} ONLY when an actual verified primary-session action handled/blocked {@code param};
-     * returns {@code false} for secondary/unknown displays, disabled/unready state, or inactive sessions so
-     * exact protected 54aa logic runs untouched.
+     * returns {@code false} for secondary/unknown displays, disabled/unready state, or inactive sessions.
      */
     public static boolean handleSetScreenState(XC_MethodHook.MethodHookParam param, int state) {
         try {
@@ -520,8 +519,7 @@ public final class NativeOnAodRampCoordinator {
 
     /**
      * Primary-scoped {@code DisplayPowerState.prepareColorFade} hook. Returns {@code false} for secondary/unknown
-     * displays, disabled/unready state, or when no verified primary ramp/handoff session owns the fade decision,
-     * letting exact protected 54aa fallback handle it.
+     * displays, disabled/unready state, or when no verified primary ramp/handoff session owns the fade decision.
      */
     public static boolean handlePrepareColorFade(XC_MethodHook.MethodHookParam param) {
         try {
@@ -2353,6 +2351,10 @@ public final class NativeOnAodRampCoordinator {
             }
         }
         return false;
+    }
+
+    static boolean isPrimaryDisplayComponent(Object obj) {
+        return Integer.valueOf(android.view.Display.DEFAULT_DISPLAY).equals(resolveDisplayIdStrict(obj));
     }
 
     private static Integer resolveDisplayIdStrict(Object obj) {

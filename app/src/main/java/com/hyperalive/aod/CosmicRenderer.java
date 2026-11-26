@@ -11,6 +11,9 @@ import java.nio.*;
 
 /** Original Cosmic shaders/model with a portable GL host. Owns only its GL objects. */
 final class CosmicRenderer implements WallpaperRenderer {
+    @Override
+    public boolean hasAmbientMotion() { return true; }
+
     final CosmicMotion motion;
     private AssetGl sphere,background;
     private final int[] buffers=new int[3],arrays=new int[2];

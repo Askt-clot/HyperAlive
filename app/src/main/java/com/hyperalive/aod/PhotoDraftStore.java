@@ -4,7 +4,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.ImageDecoder;
 import android.graphics.Matrix;
+import android.graphics.Point;
 import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Build;
@@ -1094,6 +1096,10 @@ final class PhotoDraftStore {
     static boolean loadDefaultExampleToDraft(Context ctx, String sessionId, String targetSlot) {
         if (!isSupportedSlot(targetSlot)) return false;
         try {
+            if (PhotoStore.FRAME.equals(targetSlot)) {
+                saveDefaultFrameDraft(ctx, sessionId, null);
+                return true;
+            }
             Bitmap bmp;
             try (InputStream in = ctx.getAssets().open("photo/default.jpg")) {
                 bmp = BitmapFactory.decodeStream(in);
@@ -1124,47 +1130,55 @@ final class PhotoDraftStore {
     static boolean syncFrameToLockDraftWithDefaultCrop(Context ctx, String sessionId) {
         try {
             File src = resolveExistingSourceCandidate(ctx, sessionId, PhotoStore.LOCK);
-            Bitmap decoded;
-            if (src != null) {
-                decoded = BitmapFactory.decodeFile(src.getAbsolutePath());
-            } else {
-                try (InputStream in = ctx.getAssets().open("photo/default.jpg")) {
-                    decoded = BitmapFactory.decodeStream(in);
-                }
-            }
-            if (decoded == null) return false;
-            int w = decoded.getWidth();
-            int h = decoded.getHeight();
-            int side = Math.min(w, h);
-            if (side <= 0) {
-                decoded.recycle();
-                return false;
-            }
-            int x = (w - side) / 2;
-            int y = (h - side) / 2;
-            Bitmap cropped = Bitmap.createBitmap(decoded, x, y, side, side);
-            if (cropped != decoded) {
-                decoded.recycle();
-            }
-            try {
-                commitDraftSlotRevision(
-                        ctx,
-                        sessionId,
-                        PhotoStore.FRAME,
-                        cropped,
-                        src,
-                        src == null,
-                        false,
-                        0.5f,
-                        0.5f,
-                        1.0f);
-            } finally {
-                cropped.recycle();
-            }
+            saveDefaultFrameDraft(ctx, sessionId, src);
             return true;
         } catch (Throwable t) {
             Log.e(Root.TAG, "同步留光相框草稿失败", t);
             return false;
+        }
+    }
+
+    /** Prepares a missing or legacy implicit frame for the editor without writing committed photos. */
+    static synchronized boolean ensureFrameDraft(Context ctx, String sessionId) {
+        if (!hasEffective(ctx, sessionId, PhotoStore.FRAME)) {
+            return syncFrameToLockDraftWithDefaultCrop(ctx, sessionId);
+        }
+        boolean draft = hasDraftSlot(ctx, sessionId, PhotoStore.FRAME);
+        SharedPreferences prefs = draft ? cropPrefs(ctx, sessionId)
+                : ctx.getSharedPreferences(COMMITTED_CROP_PREFS, Context.MODE_PRIVATE);
+        if (prefs.contains("zoom_" + PhotoStore.FRAME)) return false;
+        try {
+            File raw = draft ? rawFile(ctx, sessionId, PhotoStore.FRAME) : PhotoStore.rawFile(ctx, PhotoStore.FRAME);
+            if (!draft && !raw.isFile()) raw = PhotoStore.deFile(ctx, "raw_" + PhotoStore.FRAME);
+            if (!raw.isFile() || raw.length() == 0) return false;
+            saveDefaultFrameDraft(ctx, sessionId, raw);
+            return true;
+        } catch (Throwable t) {
+            Log.e(Root.TAG, "更新旧版留光相框草稿失败", t);
+            return false;
+        }
+    }
+
+    private static void saveDefaultFrameDraft(Context ctx, String sessionId, File raw) throws IOException {
+        Point screen = PhotoCropActivity.fullScreenSize(ctx);
+        ImageDecoder.Source input = raw != null ? ImageDecoder.createSource(raw)
+                : ImageDecoder.createSource(ctx.getAssets(), "photo/default.jpg");
+        Bitmap source = PhotoCropActivity.decodeCropSource(input, PhotoCropActivity.PREVIEW_DECODE_LIMIT);
+        try {
+            PhotoViewport viewport = new PhotoViewport();
+            viewport.setFreeMove(true);
+            viewport.dimensions(source.getWidth(), source.getHeight(), screen.x, screen.y);
+            viewport.resetDefault(true);
+            // The frame shader samples a window of the full-screen image, including its vertical offset.
+            Bitmap frame = PhotoCropActivity.renderCrop(source, viewport, screen.x, screen.y);
+            try {
+                commitDraftSlotRevision(ctx, sessionId, PhotoStore.FRAME, frame, raw, raw == null, true,
+                        viewport.centerX(), viewport.centerY(), viewport.zoom());
+            } finally {
+                frame.recycle();
+            }
+        } finally {
+            source.recycle();
         }
     }
 

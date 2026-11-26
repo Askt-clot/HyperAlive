@@ -9,6 +9,7 @@ precision highp float;
 in vec2 v_originTexCoord;
 in vec2 v_decorato_texCoord;
 uniform sampler2D u_photo;
+uniform sampler2D u_lock_photo;
 uniform sampler2D u_home_photo;
 uniform sampler2D u_lens_decorator;
 uniform vec3 u_translation;
@@ -22,7 +23,8 @@ uniform float u_decorator_alpha;
 uniform float u_ripple_radius;
 uniform float u_ripple_boundary;
 uniform float u_dark_strength;
-uniform float u_home_ratio;
+uniform bool u_split_surfaces;
+uniform vec3 u_scene_ratio;
 out vec4 fragColor;
 
 const vec3 saturationWeighting = vec3(0.2125, 0.7154, 0.0721);
@@ -47,15 +49,7 @@ float grid(vec2 uv, float _scale, float thickness) {
     return 1.0 - dot(grid_vec, vec2(1.0));
 }
 
-void main () {
-    vec2 uv = vec2(v_originTexCoord.x, v_originTexCoord.y * u_aspect_ratio);
-    vec2 uvCenter = vec2(0.5 + u_translation.x, (0.5 + u_translation.y) * u_aspect_ratio);
-    float dist = distance(uv, uvCenter);
-    if (dist > u_lens_scale) {
-        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
-
+vec3 lensColor(vec2 uv, vec2 uvCenter, float dist) {
     vec2 distortionUV = zoom_point(uv + lens_distortion(uv - uvCenter, u_distortion), uvCenter, u_zoom);
     #if ENABLE_RIPPLE
     if ((u_ripple_radius - u_ripple_boundary) > 0.0 && (dist <= (u_ripple_radius + u_ripple_boundary)) && (dist >= (u_ripple_radius - u_ripple_boundary))) {
@@ -74,16 +68,45 @@ void main () {
         vec4 decoratoColor = texture(u_lens_decorator, v_decorato_texCoord);
         finalColor = blendNormal(finalColor, decoratoColor.rgb, decoratoColor.a * u_decorator_alpha);
     }
-    if (u_home_ratio > 0.0001) {
-        vec2 homeUV = clamp(v_originTexCoord - u_translation.xy, 0.0, 1.0);
-        homeUV.y = 1.0 - homeUV.y;
-        vec3 homeColor = texture(u_home_photo, homeUV).rgb;
-        finalColor = mix(finalColor, homeColor, clamp(u_home_ratio, 0.0, 1.0));
-    }
     #if ENABLE_DEBUG_GRID
     float grid = grid(transformUV, 20.0, 0.05);
     finalColor = min(finalColor, vec3(grid, grid, grid));
     #endif
+    return finalColor;
+}
+
+void main () {
+    float homeWeight = u_split_surfaces ? u_scene_ratio.z : 0.0;
+    if (u_split_surfaces && u_scene_ratio.x < 0.000001 && u_scene_ratio.y >= 0.000001) {
+        // Both awake layers use screen UVs once the AOD layer has left.
+        vec2 photoUV = vec2(v_originTexCoord.x, 1.0 - v_originTexCoord.y);
+        vec3 lockColor = texture(u_lock_photo, photoUV).rgb;
+        vec3 homeColor = texture(u_home_photo, photoUV).rgb;
+        float weight = homeWeight / (u_scene_ratio.y + homeWeight);
+        fragColor = applyDarkIfNeed(vec4(mix(lockColor, homeColor, weight), 1.0), u_dark_strength);
+        return;
+    }
+
+    vec2 uv = vec2(v_originTexCoord.x, v_originTexCoord.y * u_aspect_ratio);
+    vec2 uvCenter = vec2(0.5 + u_translation.x, (0.5 + u_translation.y) * u_aspect_ratio);
+    float dist = distance(uv, uvCenter);
+    if (dist > u_lens_scale) {
+        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    // The desktop layer follows the opening circle but keeps its own undistorted
+    // sampling coordinates. Only the AOD contribution goes through the lens.
+    vec3 finalColor = vec3(0.0);
+    if (homeWeight < 0.999999) {
+        finalColor = lensColor(uv, uvCenter, dist);
+    }
+    if (homeWeight >= 0.000001) {
+        vec2 homeUV = v_originTexCoord - u_translation.xy;
+        homeUV.y = 1.0 - homeUV.y;
+        vec3 homeColor = texture(u_home_photo, clamp(homeUV, 0.0, 1.0)).rgb;
+        finalColor = mix(finalColor, homeColor, homeWeight);
+    }
     vec4 darkColor = applyDarkIfNeed(vec4(finalColor, 1.0), u_dark_strength);
     fragColor = mix(darkColor, vec4(0.0, 0.0, 0.0, 1.0), smoothstep(u_lens_scale - 0.002, u_lens_scale, dist));
 }

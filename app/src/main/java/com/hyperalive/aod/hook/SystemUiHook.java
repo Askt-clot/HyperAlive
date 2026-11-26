@@ -208,6 +208,17 @@ public final class SystemUiHook {
                     }
                 });
 
+        HookUtils.hookAll(cl, "com.android.keyguard.clock.KeyguardClockContainer", "doAnimationToAod",
+                new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args.length != 4 || !Boolean.TRUE.equals(param.args[0])
+                                || !StateCoordinator.isAodPolicyActiveFast()) return;
+                        Object injector = HookUtils.getField(param.thisObject, "mDozeServiceHost");
+                        Object plugin = HookUtils.getField(injector, "mDozePlugin");
+                        if (plugin != null) AodHook.installClockPositionGate(plugin.getClass().getClassLoader());
+                    }
+                });
+
         HookUtils.hookAll(cl, "com.android.keyguard.clock.animation.ClockBaseAnimation", "doAnimationToAod",
                 new XC_MethodHook() {
                     @Override
@@ -222,7 +233,9 @@ public final class SystemUiHook {
                                     sDoAnimationDepth.set(sDoAnimationDepth.get() + 1);
                                     param.setObjectExtra("tracked_5arg", Boolean.TRUE);
                                     StateCoordinator.onLinkageAnimStarted("ClockBaseAnimation.doAnimationToAod (5-arg)");
+                                    if (StateCoordinator.isLinkageAnimating()) NativeClockHandoff.begin(param.thisObject);
                                 } else if (!toAod) {
+                                    NativeClockHandoff.clear(null);
                                     StateCoordinator.onLinkageAnimFinished("ClockBaseAnimation.doAnimationToAod (toAod=false)");
                                 }
                             }

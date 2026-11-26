@@ -5,6 +5,7 @@ import android.app.WallpaperManager;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.BitmapFactory;
 import android.os.Build;
@@ -188,6 +189,8 @@ public final class PreModuleWallpaperBackup {
         public String defaultOemLockType = "";
         public boolean hasModuleState = false;
         public int moduleAodStyle = -1;
+        public String moduleAodPositions = null;
+        public int modulePhotoTextures = -1;
         public int moduleLastKind = LastSet.KIND_FOLLOW;
         public String moduleLastComponent = "";
         public String moduleClockAodJson = "";
@@ -501,6 +504,8 @@ public final class PreModuleWallpaperBackup {
             if (modObj != null) {
                 meta.hasModuleState = true;
                 meta.moduleAodStyle = modObj.optInt("aod_style", -1);
+                meta.moduleAodPositions = modObj.optString(AodStyleSettings.KEY_POSITIONS, null);
+                meta.modulePhotoTextures = modObj.optInt(PhotoTextureSettings.KEY, -1);
                 meta.moduleLastKind = modObj.optInt("last_kind", LastSet.KIND_FOLLOW);
                 meta.moduleLastComponent = modObj.optString("last_component", "");
                 meta.moduleClockAodJson = modObj.optString("clock_aod", "");
@@ -536,7 +541,8 @@ public final class PreModuleWallpaperBackup {
         if (pkg != null && (pkg.equals(myPkg) || "com.hyperalive.aod".equals(pkg) || "com.qihang.aod".equals(pkg))) {
             return true;
         }
-        return cls != null && (cls.contains("QihangWallpaper") || cls.contains("QihangHomeWallpaper"));
+        return cls != null && (cls.contains("QihangWallpaper") || cls.contains("QihangHomeWallpaper")
+                || cls.contains("QihangDynamicWallpaper"));
     }
 
     private static boolean isHyperAlive(Context ctx, WallpaperInfo info) {
@@ -609,8 +615,7 @@ public final class PreModuleWallpaperBackup {
     }
 
     /**
-     * 在 EditorActivity.applyScene 首次写入前执行备份准备。
-     * 若返回 ok=false，调用方必须在任何持久化/壁纸写入前立即中止本次应用！
+     * 在用户选择备份并应用时准备原壁纸快照。备份失败后可由用户另行选择直接应用。
      */
     public static BackupPrepResult ensureBackupBeforeApply(Context ctx) {
         if (ctx == null) {
@@ -2838,6 +2843,9 @@ public final class PreModuleWallpaperBackup {
         try {
             JSONObject obj = new JSONObject();
             obj.put("aod_style", AodStyleSettings.getStyle(ctx));
+            obj.put(AodStyleSettings.KEY_POSITIONS,
+                    AodStyleSettings.encodePositions(AodStyleSettings.getPositions(ctx)));
+            obj.put(PhotoTextureSettings.KEY, PhotoTextureSettings.get(ctx));
             obj.put("last_kind", LastSet.kind(ctx));
             obj.put("last_component", LastSet.component(ctx));
             obj.put("clock_aod", serializeClockConfig(ClockSettings.getAodDirect(ctx)).toString());
@@ -2856,7 +2864,16 @@ public final class PreModuleWallpaperBackup {
         if (ctx == null || obj == null) return false;
         try {
             boolean ok = true;
+            int textures = obj.optInt(PhotoTextureSettings.KEY, -1);
+            boolean reloadTextures = PhotoTextureSettings.valid(textures)
+                    && textures != PhotoTextureSettings.get(ctx);
+            if (PhotoTextureSettings.valid(textures) && !PhotoTextureSettings.saveStrict(ctx, textures)) {
+                ok = false;
+            }
             int style = obj.optInt("aod_style", -1);
+            if (!restoreAodPositions(ctx, obj.optString(AodStyleSettings.KEY_POSITIONS, null))) {
+                ok = false;
+            }
             if (style >= 0) {
                 boolean stOk = sendBroadcast
                         ? AodStyleSettings.setStyleStrict(ctx, style)
@@ -2873,8 +2890,20 @@ public final class PreModuleWallpaperBackup {
             }
             int lastKind = obj.optInt("last_kind", LastSet.KIND_FOLLOW);
             String lastComp = obj.optString("last_component", "");
+            boolean reloadDynamic = sendBroadcast && (lastKind == LastSet.KIND_DYNAMIC
+                    || LastSet.kind(ctx) == LastSet.KIND_DYNAMIC);
             if (!LastSet.saveStrict(ctx, lastKind, lastComp)) {
                 ok = false;
+            }
+            if (sendBroadcast && (reloadDynamic || reloadTextures)) {
+                try {
+                    Intent reload = new Intent(QihangWallpaper.ACTION_MODE);
+                    reload.setPackage(ctx.getPackageName());
+                    reload.putExtra("reload_photo", true);
+                    ctx.sendBroadcast(reload);
+                } catch (RuntimeException error) {
+                    Log.w(TAG, "壁纸配置已恢复，渲染刷新通知未送达", error);
+                }
             }
             return ok;
         } catch (Throwable t) {
@@ -2883,9 +2912,19 @@ public final class PreModuleWallpaperBackup {
         }
     }
 
+    private static boolean restoreAodPositions(Context ctx, String positions) {
+        return positions == null || AodStyleSettings.savePositionsStrict(ctx, positions);
+    }
+
     private static void restoreModuleStateIfPresent(Context ctx, BackupMetadata meta) {
         if (ctx == null || meta == null || !meta.hasModuleState) return;
         try {
+            if (PhotoTextureSettings.valid(meta.modulePhotoTextures)) {
+                PhotoTextureSettings.saveStrict(ctx, meta.modulePhotoTextures);
+            }
+            if (!restoreAodPositions(ctx, meta.moduleAodPositions)) {
+                Log.w(TAG, "恢复息屏位置失败");
+            }
             if (meta.moduleAodStyle >= 0) {
                 AodStyleSettings.setStyle(ctx, meta.moduleAodStyle);
             }

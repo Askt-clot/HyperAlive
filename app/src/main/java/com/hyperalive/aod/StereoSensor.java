@@ -14,7 +14,7 @@ final class StereoSensor implements SensorEventListener,AutoCloseable {
     private final Sensor gyro;
     private final Handler handler;
     private final Listener listener;
-    private boolean active;
+    private volatile boolean active;
     StereoSensor(Context context,Handler handler,Listener listener){
         manager=(SensorManager)context.getSystemService(Context.SENSOR_SERVICE);
         gyro=manager==null?null:manager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);

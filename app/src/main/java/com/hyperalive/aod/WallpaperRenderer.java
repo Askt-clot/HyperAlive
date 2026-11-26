@@ -8,8 +8,8 @@ interface WallpaperRenderer extends AutoCloseable {
     void render();
     void close();
     default void visible(boolean value){}
-    default void continuous(boolean value){}
-    default void interaction(){}
+    default void continuous(boolean enabled) {}
+    default boolean hasAmbientMotion() { return false; }
     static WallpaperRenderer create(AssetManager assets,int variant,boolean dark,int width,int height,int scene,boolean keepLock)throws IOException {
         return create(assets,variant,dark,width,height,scene,keepLock,()->{});
     }

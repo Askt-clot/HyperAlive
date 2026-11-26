@@ -37,7 +37,7 @@ DEFAULT_KS = os.environ.get('HYPERALIVE_KEYSTORE', '')
 DEFAULT_OUT = os.path.join(ROOT, 'build', 'cli_out')
 DEFAULT_FINAL = os.environ.get(
     'HYPERALIVE_OUT_APK',
-    os.path.join(ROOT, 'build', 'HyperAlive-v1.0.4.apk'),
+    os.path.join(ROOT, 'build', 'HyperAlive-v1.0.5.apk'),
 )
 
 # 保持对 import build 后读取或覆盖 build.KS / build.OUT / build.FINAL 的向后兼容

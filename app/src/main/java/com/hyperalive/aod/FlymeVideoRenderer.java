@@ -2,7 +2,6 @@ package com.hyperalive.aod;
 
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES30;
@@ -12,12 +11,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Surface;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 
-/** Original Flyme 9 浪流/深潜/涟漪 videos, OES shaders and playback clock. */
+/** Renders the OpenAlive Flyme 9 clip for each of the three screen states. */
 final class FlymeVideoRenderer implements WallpaperRenderer {
     private static final String BASE="flyme-video/";
     private final int width,height;
@@ -51,18 +49,16 @@ final class FlymeVideoRenderer implements WallpaperRenderer {
         try{
             shader=new AssetGl(assets,BASE+"video_vertex.glsl",BASE+"video_runtime_frag.glsl");
             thumbnailShader=new AssetGl(assets,BASE+"video_vertex.glsl",BASE+"thumbnail_runtime_frag.glsl");
-            String slug=index==1?"langliu":index==2?"shenqian":"lianyi";
-            try(InputStream in=assets.open(BASE+slug+".png")){
-                Bitmap bitmap=BitmapFactory.decodeStream(in);
-                if(bitmap==null)throw new IOException("Invalid Flyme video thumbnail: "+slug);
-                try{
-                    GLES30.glGenTextures(1,thumbnail,0);GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,thumbnail[0]);
-                    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_LINEAR);
-                    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_LINEAR);
-                    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_CLAMP_TO_EDGE);
-                    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_CLAMP_TO_EDGE);
-                    GLUtils.texImage2D(GLES30.GL_TEXTURE_2D,0,bitmap,0);
-                }finally{bitmap.recycle();}
+            Bitmap bitmap = DynamicWallpapers.loadThumbnail(assets, variant);
+            try {
+                GLES30.glGenTextures(1,thumbnail,0);GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,thumbnail[0]);
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_LINEAR);
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_LINEAR);
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_CLAMP_TO_EDGE);
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_CLAMP_TO_EDGE);
+                GLUtils.texImage2D(GLES30.GL_TEXTURE_2D,0,bitmap,0);
+            } finally {
+                bitmap.recycle();
             }
             GLES30.glGenTextures(1,texture,0);GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,texture[0]);
             GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_LINEAR);
@@ -73,6 +69,7 @@ final class FlymeVideoRenderer implements WallpaperRenderer {
             surfaceTexture.setOnFrameAvailableListener(ignored->{if(closed)return;frameAvailable=true;requestFrame();},handler);
             surface=new Surface(surfaceTexture);
             decoder=new FlymeVideoDecoder(assets,BASE+"mz_video_wallpaper_v"+index+"_1080.mp4",surface,handler,this::requestFrame);
+            decoder.request(motion.sourceTimeUs());
             // Original top-left UV=(0,1), transformed once by SurfaceTexture.
             float[] quad={-1,1,0,0,1, 1,1,0,1,1, 1,-1,0,1,0,
                           -1,1,0,0,1, 1,-1,0,1,0, -1,-1,0,0,0};
@@ -104,8 +101,10 @@ final class FlymeVideoRenderer implements WallpaperRenderer {
         if(closed)return;motion.visible(value);
         try{decoder.visible(value);}catch(IOException error){throw new IllegalStateException("Unable to resume Flyme video",error);}
     }
-    public void continuous(boolean value){motion.continuous(value);}
-    public void interaction(){motion.interaction();}
+    @Override
+    public void continuous(boolean enabled) {
+        motion.continuous(enabled);
+    }
     public void render(){
         if(closed)return;decoder.check();
         if(motion.takeTick())decoder.request(motion.sourceTimeUs());

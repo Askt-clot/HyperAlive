@@ -16,7 +16,6 @@ public final class HookUtils {
 
     public static final String TAG = "QihangLSP";
     public static final String PKG_SELF = "com.hyperalive.aod";
-    public static final String PKG_ALIVE = "com.flyme.alivewallpaper";
     public static final String PERM_AMBIENT = "android.permission.AMBIENT_WALLPAPER";
 
     private static final int MAX_XPOSED_LOG_CHARS = 1024;
@@ -184,6 +183,6 @@ public final class HookUtils {
     }
 
     public static boolean isTarget(String pkg) {
-        return PKG_SELF.equals(pkg) || PKG_ALIVE.equals(pkg);
+        return PKG_SELF.equals(pkg);
     }
 }

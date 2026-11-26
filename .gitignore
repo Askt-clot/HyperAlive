@@ -25,6 +25,9 @@ __pycache__/
 *.log
 *.mp4
 *.png
+!/app/src/main/assets/**/*.mp4
+!/app/src/main/assets/**/*.png
+!/app/src/main/res/**/*.png
 tmp/
 tools/fixtures/
 

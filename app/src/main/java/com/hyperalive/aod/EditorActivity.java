@@ -16,7 +16,9 @@ import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.Window;
@@ -87,6 +89,7 @@ public class EditorActivity extends UiActivity {
     private static final String STATE_DESKTOP_SOURCE = "state_desktop_source";
     private static final String STATE_FROM_LIBRARY = "state_from_library";
     private static final String STATE_PENDING_STYLE = "state_pending_style";
+    private static final String STATE_AOD_POSITIONS_EDITED = "state_aod_positions_edited";
 
     private int scene = Motion.LOCK;
     /** 选中的动态壁纸组件（来自壁纸库），非空时锁屏/桌面预览都显示它。 */
@@ -110,6 +113,8 @@ public class EditorActivity extends UiActivity {
                             mPendingAodConfig = ClockSettings.getAodDirect(EditorActivity.this);
                             mPendingLockConfig = ClockSettings.getLockDirect(EditorActivity.this);
                             mPendingAodVisualStyle = AodStyleSettings.getStyle(EditorActivity.this);
+                            mPendingAodPositions = AodStyleSettings.getPositions(EditorActivity.this);
+                            mPendingPhotoTextures = PhotoTextureSettings.get(EditorActivity.this);
                             if (!fromLibrary) {
                                 desktopSource = LastSet.kind(EditorActivity.this);
                                 if (desktopSource == LastSet.KIND_DYNAMIC) {
@@ -122,7 +127,8 @@ public class EditorActivity extends UiActivity {
                                         || desktopSource == LastSet.KIND_DYNAMIC;
                             }
                             if (previewImage != null) {
-                                previewImage.setAodStyle(mPendingAodVisualStyle);
+                                updateAodStylePreview();
+                                previewImage.setPhotoTextureStyles(mPendingPhotoTextures);
                                 previewImage.setDynamicComponent(wallpaper);
                                 previewImage.setHomeKind(desktopSource);
                                 previewImage.reloadPhoto();
@@ -140,6 +146,7 @@ public class EditorActivity extends UiActivity {
     private boolean followLock = true;
     /** 桌面来源：0=壁纸库选的动态壁纸 1=跟随锁屏 2=独立照片。 */
     private int desktopSource = 1;
+    private int mPendingPhotoTextures;
     /** 本次会话是否**真的**从壁纸库选了动态壁纸（只有这时才允许应用动态壁纸）。 */
     private boolean fromLibrary;
     private android.content.SharedPreferences prefs;
@@ -152,8 +159,15 @@ public class EditorActivity extends UiActivity {
     /** 暂存的时间样式草稿（熄屏与锁屏独立，用户在对话框调整，点右上角「应用」才真正生效落盘）。 */
     private ClockSettings.Config mPendingAodConfig = null;
     private ClockSettings.Config mPendingLockConfig = null;
-    /** 暂存的息屏视觉样式草稿（0=启航, 1=留光，点右上角「应用」才真正生效落盘）。 */
+    /** 息屏样式及各样式的位置在应用前保留为编辑草稿。 */
     private int mPendingAodVisualStyle = -1;
+    private int[] mPendingAodPositions;
+    private boolean mAodPositionsEdited;
+    private boolean mAodDragActive;
+    private boolean mAodDragging;
+    private float mAodDragStartX;
+    private float mAodDragStartY;
+    private int mAodDragStartPosition;
     /** 系统导航栏 / 手势小白条底部 Inset（px）。 */
     private int mNavInsetBottom = 0;
 
@@ -187,8 +201,12 @@ public class EditorActivity extends UiActivity {
             prefs = getSharedPreferences("qihang_editor", MODE_PRIVATE);
             mPendingAodConfig = ClockSettings.getAodDirect(this);
             mPendingLockConfig = ClockSettings.getLockDirect(this);
+            mPendingPhotoTextures = PhotoTextureSettings.get(this);
+            mPendingAodPositions = AodStyleSettings.getPositions(this);
 
             if (savedInstanceState != null) {
+                mPendingPhotoTextures = savedInstanceState.getInt(
+                        PhotoTextureSettings.KEY, mPendingPhotoTextures);
                 scene = savedInstanceState.getInt(STATE_SCENE, Motion.LOCK);
                 wallpaper = savedInstanceState.getString(STATE_WP);
                 followLock = savedInstanceState.getBoolean(STATE_FOLLOW_LOCK, true);
@@ -196,6 +214,12 @@ public class EditorActivity extends UiActivity {
                 fromLibrary = savedInstanceState.getBoolean(STATE_FROM_LIBRARY, false);
                 mPendingAodVisualStyle = savedInstanceState.getInt(
                         STATE_PENDING_STYLE, AodStyleSettings.getStyle(this));
+                String positions = savedInstanceState.getString(AodStyleSettings.KEY_POSITIONS);
+                if (positions != null) {
+                    mPendingAodPositions = AodStyleSettings.decodePositions(positions);
+                    mAodPositionsEdited = savedInstanceState.getBoolean(STATE_AOD_POSITIONS_EDITED);
+                    mHasUserEdited |= mAodPositionsEdited;
+                }
                 ClockSettings.Config restoredAod = readClockBundle(savedInstanceState, "aod");
                 if (restoredAod != null) mPendingAodConfig = restoredAod;
                 ClockSettings.Config restoredLock = readClockBundle(savedInstanceState, "lock");
@@ -217,21 +241,8 @@ public class EditorActivity extends UiActivity {
                         || desktopSource == LastSet.KIND_DYNAMIC;
             }
             buildEditor();
-            if (mPendingAodVisualStyle == AodStyleSettings.STYLE_LEAVE_LIGHT
-                    && !PhotoDraftStore.hasEffective(this, draftSessionId, PhotoStore.FRAME)) {
-                final String targetSession = draftSessionId;
-                new Thread(() -> {
-                    boolean synced = PhotoDraftStore.syncFrameToLockDraftWithDefaultCrop(
-                            EditorActivity.this, targetSession);
-                    if (synced) {
-                        runOnUiThread(() -> {
-                            if (!isFinishing() && !isDestroyed() && previewImage != null
-                                    && targetSession.equals(draftSessionId)) {
-                                previewImage.reloadPhoto();
-                            }
-                        });
-                    }
-                }, "SyncFramePhotoOnInit").start();
+            if (mPendingAodVisualStyle == AodStyleSettings.STYLE_LEAVE_LIGHT) {
+                prepareDefaultFramePreview();
             }
         } catch (Throwable t) {
             Log.e(TAG, "编辑器构建失败", t);
@@ -254,6 +265,12 @@ public class EditorActivity extends UiActivity {
         outState.putInt(STATE_DESKTOP_SOURCE, desktopSource);
         outState.putBoolean(STATE_FROM_LIBRARY, fromLibrary);
         outState.putInt(STATE_PENDING_STYLE, mPendingAodVisualStyle);
+        if (mPendingAodPositions != null) {
+            outState.putString(AodStyleSettings.KEY_POSITIONS,
+                    AodStyleSettings.encodePositions(mPendingAodPositions));
+            outState.putBoolean(STATE_AOD_POSITIONS_EDITED, mAodPositionsEdited);
+        }
+        outState.putInt(PhotoTextureSettings.KEY, mPendingPhotoTextures);
         writeClockBundle(outState, "aod", mPendingAodConfig);
         writeClockBundle(outState, "lock", mPendingLockConfig);
     }
@@ -337,6 +354,8 @@ public class EditorActivity extends UiActivity {
         // ---- 全屏预览（底层，铺满整个屏幕）----
         previewImage = new LivePreviewView(this, scene);
         previewImage.setDraftSessionId(draftSessionId);
+        previewImage.setPhotoTextureStyles(mPendingPhotoTextures);
+        previewImage.setOnTouchListener(this::onAodPositionTouch);
         root.addView(previewImage, new FrameLayout.LayoutParams(-1, -1));
 
         // ---- 顶栏：取消 / 应用（浮在上方）----
@@ -355,7 +374,7 @@ public class EditorActivity extends UiActivity {
             PhotoDraftStore.releaseDraftLeaseAndDiscardIfIdle(this, draftSessionId, this);
             finish();
         });
-        apply.setOnClickListener(v -> applyScene());
+        apply.setOnClickListener(v -> showApplyOptions());
         bar.addView(cancel, new LinearLayout.LayoutParams(ui.dp(74), ui.dp(36)));
         View spacer = new View(this);
         bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
@@ -420,6 +439,7 @@ public class EditorActivity extends UiActivity {
     }
 
     private void selectScene(int s) {
+        if (s != Motion.AOD || desktopSource == LastSet.KIND_DYNAMIC) endAodPositionDrag();
         scene = s;
         for (int i = 0; i < 3; i++) {
             boolean on = i == s;
@@ -433,8 +453,7 @@ public class EditorActivity extends UiActivity {
         }
         previewImage.setDynamicComponent(wallpaper);
         previewImage.setHomeKind(desktopSource);
-        previewImage.setAodStyle(mPendingAodVisualStyle != -1
-                ? mPendingAodVisualStyle : AodStyleSettings.getStyle(this));
+        updateAodStylePreview();
         previewImage.setScene(s);
         if (s == Motion.AOD && mPendingAodConfig != null) {
             previewImage.applyAodClockConfig(mPendingAodConfig);
@@ -443,6 +462,60 @@ public class EditorActivity extends UiActivity {
         }
         buildButtons(s);
         // 注意：预览图切三态纯属应用内效果展示，严禁调用 sendMode 给真机壁纸发全局广播！
+    }
+
+    private void updateAodStylePreview() {
+        int style = AodStyleSettings.normalizeStyle(mPendingAodVisualStyle);
+        previewImage.setAodStyle(style, mPendingAodPositions[style]);
+    }
+
+    private void updateAodPosition(int position) {
+        int style = AodStyleSettings.normalizeStyle(mPendingAodVisualStyle);
+        if (mPendingAodPositions[style] == position) return;
+        mPendingAodPositions[style] = position;
+        mAodPositionsEdited = mHasUserEdited = true;
+        updateAodStylePreview();
+    }
+
+    private int currentAodPosition() {
+        return mPendingAodPositions[AodStyleSettings.normalizeStyle(mPendingAodVisualStyle)];
+    }
+
+    private void endAodPositionDrag() {
+        mAodDragActive = false;
+        mAodDragging = false;
+        previewImage.setAodPositionGuidesVisible(false);
+    }
+
+    private boolean onAodPositionTouch(View view, MotionEvent event) {
+        if (scene != Motion.AOD || desktopSource == LastSet.KIND_DYNAMIC) return false;
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                mAodDragActive = true;
+                mAodDragging = false;
+                mAodDragStartX = event.getX();
+                mAodDragStartY = event.getY();
+                mAodDragStartPosition = currentAodPosition();
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (!mAodDragActive || view.getWidth() <= 0 || view.getHeight() <= 0) break;
+                float dx = event.getX() - mAodDragStartX;
+                float dy = event.getY() - mAodDragStartY;
+                int slop = ViewConfiguration.get(view.getContext()).getScaledTouchSlop();
+                if (!mAodDragging && Math.hypot(dx, dy) < slop) break;
+                mAodDragging = true;
+                previewImage.setAodPositionGuidesVisible(true);
+                updateAodPosition(AodStyleSettings.packPosition(
+                        AodStyleSettings.positionX(mAodDragStartPosition) + dx / view.getWidth(),
+                        AodStyleSettings.positionY(mAodDragStartPosition) - dy / view.getHeight()));
+                break;
+            case MotionEvent.ACTION_POINTER_DOWN:
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                endAodPositionDrag();
+                break;
+        }
+        return true;
     }
 
     /** 每个场景自己的圆形按钮行（与 OpenAlive 的系统按钮条一致）。 */
@@ -471,6 +544,10 @@ public class EditorActivity extends UiActivity {
             // 锁屏：从系统相册选一张照片（引擎画在锁屏 + 息屏圆圈里）
             addRoundButton("壁纸", new String[]{"ic_homepage_wallpaper", "ic_settings_wallpaper_filled"},
                     0xFFFFFFFF, v -> pick(PhotoStore.LOCK));
+            if (desktopSource != LastSet.KIND_DYNAMIC) {
+                addRoundButton("纹理", new String[]{"ic_wallpaper_texture_btn_icon", "@self:ic_wallpaper"},
+                        0xFF7EB6FF, v -> showPhotoTextureDialog(Motion.LOCK));
+            }
         } else {
             // 桌面：跟随锁屏 / 单独选一张
                     LinearLayout follow = addRoundButton("跟随锁屏",
@@ -495,7 +572,105 @@ public class EditorActivity extends UiActivity {
             }
             addRoundButton("壁纸", new String[]{"ic_homepage_wallpaper", "ic_settings_wallpaper_filled"},
                     0xFFFFFFFF, v -> pick(PhotoStore.HOME));
+            if (desktopSource != LastSet.KIND_DYNAMIC) {
+                addRoundButton("纹理", new String[]{"ic_wallpaper_texture_btn_icon", "@self:ic_wallpaper"},
+                        0xFF7EB6FF, v -> showPhotoTextureDialog(Motion.HOME));
+            }
         }
+    }
+
+    private void showPhotoTextureDialog(int targetScene) {
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Translucent_NoTitleBar);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        FrameLayout scrim = new FrameLayout(this);
+        scrim.setBackgroundColor(0x36000000);
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setClickable(true);
+        sheet.setBackground(ui.rounded(0xFF1E1E22, 24));
+        int padding = ui.dp(14);
+        sheet.setPadding(padding, padding, padding, padding + mNavInsetBottom);
+        scrim.setOnApplyWindowInsetsListener((v, insets) -> {
+            int bottom = UiActivity.getNavigationBarInsetBottom(v, insets);
+            sheet.setPadding(padding, padding, padding, padding + bottom);
+            return insets;
+        });
+        scrim.addView(sheet, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+
+        boolean desktop = targetScene == Motion.HOME;
+        TextView title = new TextView(this);
+        title.setText(desktop ? "桌面纹理" : "锁屏纹理");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        title.setGravity(Gravity.CENTER);
+        sheet.addView(title, new LinearLayout.LayoutParams(-1, ui.dp(36)));
+
+        LinearLayout row = new LinearLayout(this);
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+        rowParams.topMargin = ui.dp(10);
+        sheet.addView(row, rowParams);
+        String[] labels = {"无", "长虹", "波浪", "雾花"};
+        String[] thumbnails = {"source", "straight_line", "curve", "frosted_glass"};
+        LinearLayout[] cards = new LinearLayout[labels.length];
+        int selected = desktop ? PhotoTextureSettings.home(mPendingPhotoTextures)
+                : PhotoTextureSettings.lock(mPendingPhotoTextures);
+        for (int i = 0; i < labels.length; i++) {
+            final int style = i;
+            LinearLayout card = new LinearLayout(this);
+            cards[i] = card;
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setGravity(Gravity.CENTER);
+            card.setPadding(ui.dp(3), ui.dp(6), ui.dp(3), ui.dp(6));
+            card.setForeground(ui.itemRipple(14));
+            card.setFocusable(true);
+            LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, -2, 1f);
+            if (i > 0) cell.setMarginStart(ui.dp(6));
+            row.addView(card, cell);
+
+            ImageView preview = new ImageView(this);
+            preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            try (InputStream in = getAssets().open("preview/textures/" + thumbnails[i] + ".png")) {
+                preview.setImageBitmap(BitmapFactory.decodeStream(in));
+            } catch (java.io.IOException error) {
+                Log.w(TAG, "读取纹理缩略图失败", error);
+            }
+            card.addView(preview, new LinearLayout.LayoutParams(-1, ui.dp(70)));
+
+            TextView label = new TextView(this);
+            label.setText(labels[i]);
+            label.setTextColor(0xFFFFFFFF);
+            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            label.setGravity(Gravity.CENTER);
+            card.addView(label, new LinearLayout.LayoutParams(-1, ui.dp(26)));
+            markPhotoTextureCard(card, selected == i);
+            card.setOnClickListener(v -> {
+                int lock = desktop ? PhotoTextureSettings.lock(mPendingPhotoTextures) : style;
+                int home = desktop ? style : PhotoTextureSettings.home(mPendingPhotoTextures);
+                mPendingPhotoTextures = PhotoTextureSettings.selection(lock, home);
+                mHasUserEdited = true;
+                previewImage.setPhotoTextureStyles(mPendingPhotoTextures);
+                for (int j = 0; j < cards.length; j++) {
+                    markPhotoTextureCard(cards[j], j == style);
+                }
+                append((desktop ? "桌面纹理" : "锁屏纹理") + "草稿：" + labels[style]);
+            });
+        }
+
+        BottomSheetController controller = new BottomSheetController(dialog, scrim, sheet, null);
+        scrim.setOnClickListener(v -> controller.dismissWithAnimation());
+        TextView done = pillButton("完成", ui.accentBlue(), 0xFFFFFFFF);
+        done.setOnClickListener(v -> controller.dismissWithAnimation());
+        LinearLayout.LayoutParams doneParams = new LinearLayout.LayoutParams(-1, ui.dp(40));
+        doneParams.topMargin = ui.dp(14);
+        sheet.addView(done, doneParams);
+        controller.setupAndShow();
+    }
+
+    private void markPhotoTextureCard(View card, boolean selected) {
+        card.setSelected(selected);
+        GradientDrawable background = ui.rounded(selected ? 0x250D84FF : 0xFF28282C, 14);
+        background.setStroke(ui.dp(selected ? 2 : 1), selected ? ui.accentBlue() : 0x14FFFFFF);
+        card.setBackground(background);
     }
 
     /** 打开系统相册选图（优先直达相册包，避免弹出"选择应用"面板）。 */
@@ -679,6 +854,7 @@ public class EditorActivity extends UiActivity {
         final boolean isLiuguang = isFrame;
         final String targetSession = draftSessionId;
         run0("读取照片并进入裁切 " + name, () -> {
+            boolean frameChanged = isFrame && PhotoDraftStore.ensureFrameDraft(this, targetSession);
             java.io.File staged = PhotoDraftStore.stageExistingOrFallback(this, targetSession, name);
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed() || !targetSession.equals(draftSessionId)) {
@@ -689,6 +865,7 @@ public class EditorActivity extends UiActivity {
                     toast("未能准备好相片");
                     return;
                 }
+                if (frameChanged) previewImage.reloadPhoto();
                 startActivityForResult(
                         PhotoCropActivity.intent(this, staged.getName(), name, isLiuguang, targetSession, false),
                         cropReq);
@@ -697,12 +874,25 @@ public class EditorActivity extends UiActivity {
         });
     }
 
+    private void prepareDefaultFramePreview() {
+        final String targetSession = draftSessionId;
+        new Thread(() -> {
+            if (PhotoDraftStore.ensureFrameDraft(this, targetSession)) {
+                runOnUiThread(() -> {
+                    if (!isFinishing() && !isDestroyed() && previewImage != null
+                            && targetSession.equals(draftSessionId)) {
+                        previewImage.reloadPhoto();
+                    }
+                });
+            }
+        }, "PrepareFrameDraftPreview").start();
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         if (previewImage != null) {
-            previewImage.setAodStyle(mPendingAodVisualStyle != -1
-                    ? mPendingAodVisualStyle : AodStyleSettings.getStyle(this));
+            updateAodStylePreview();
             previewImage.startScene();
         }
     }
@@ -710,6 +900,7 @@ public class EditorActivity extends UiActivity {
     @Override
     protected void onPause() {
         if (previewImage != null) {
+            endAodPositionDrag();
             previewImage.stopScene();
         }
         super.onPause();
@@ -1402,7 +1593,7 @@ public class EditorActivity extends UiActivity {
         lunarTextCol.addView(lblLunar);
 
         TextView subLunar = new TextView(this);
-        subLunar.setText("在日期右侧显示阴历月份与传统节气");
+        subLunar.setText("在日期右侧显示农历月日");
         subLunar.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         subLunar.setTextColor(0xFF8E8E93);
         lunarTextCol.addView(subLunar);
@@ -1687,13 +1878,22 @@ public class EditorActivity extends UiActivity {
         LinearLayout cardRow = new LinearLayout(this);
         cardRow.setOrientation(LinearLayout.HORIZONTAL);
         cardRow.setGravity(Gravity.CENTER);
+        LinearLayout secondCardRow = new LinearLayout(this);
+        secondCardRow.setOrientation(LinearLayout.HORIZONTAL);
+        secondCardRow.setGravity(Gravity.CENTER);
 
         int curStyle = mPendingAodVisualStyle != -1
                 ? mPendingAodVisualStyle : AodStyleSettings.getStyle(this);
-        int[] styles = {AodStyleSettings.STYLE_SET_SAIL, AodStyleSettings.STYLE_LEAVE_LIGHT, AodStyleSettings.STYLE_MOON};
-        String[] titles = {"启航", "留光", "星月"};
-        String[] subs = {"圆形透镜 · 自转扩散", "拍立得相框 · 倾斜绽放", "弯月星芒 · 朦胧绽放"};
-        String[] assets = {"preview/aod_qihang.png", "preview/aod_liuguang.png", "preview/aod_moon.png"};
+        final int columns = 3;
+        int[] styles = {
+                AodStyleSettings.STYLE_SET_SAIL, AodStyleSettings.STYLE_LEAVE_LIGHT, AodStyleSettings.STYLE_MOON,
+                AodStyleSettings.STYLE_DOOR, AodStyleSettings.STYLE_MOUNTAIN, AodStyleSettings.STYLE_GALAXY
+        };
+        String[] titles = {"启航", "留光", "星月", "轻启", "山脉", "银河"};
+        String[] subs = {"圆形透镜 · 自转扩散", "拍立得相框 · 倾斜绽放", "弯月星芒 · 朦胧绽放",
+                "门扉渐开", "群峰舒展", "星河铺展"};
+        String[] assets = {"preview/aod_qihang.png", "preview/aod_liuguang.png", "preview/aod_moon.png",
+                "preview/aod_door.png", "preview/aod_mountain.png", "preview/aod_galaxy.png"};
 
         final FrameLayout[] cardViews = new FrameLayout[styles.length];
 
@@ -1798,7 +1998,7 @@ public class EditorActivity extends UiActivity {
             FrameLayout card = new FrameLayout(this);
             LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
-            if (i > 0) cardLp.leftMargin = ui.dp(8);
+            if (i % columns != 0) cardLp.setMarginStart(ui.dp(8));
             card.setLayoutParams(cardLp);
 
             LinearLayout content = new LinearLayout(this);
@@ -1869,22 +2069,8 @@ public class EditorActivity extends UiActivity {
                     previewImage.reloadPhoto();
                 }
                 mPendingAodVisualStyle = styleId;
-                previewImage.setAodStyle(styleId);
-                if (styleId == AodStyleSettings.STYLE_LEAVE_LIGHT
-                        && !PhotoDraftStore.hasEffective(EditorActivity.this, draftSessionId, PhotoStore.FRAME)) {
-                    final String targetSession = draftSessionId;
-                    new Thread(() -> {
-                        boolean synced = PhotoDraftStore.syncFrameToLockDraftWithDefaultCrop(
-                                EditorActivity.this, targetSession);
-                        if (synced) {
-                            runOnUiThread(() -> {
-                                if (!isFinishing() && !isDestroyed()
-                                        && targetSession.equals(draftSessionId)) {
-                                    previewImage.reloadPhoto();
-                                }
-                            });
-                        }
-                    }, "SyncFramePhotoDraftOnSelect").start();
+                if (styleId == AodStyleSettings.STYLE_LEAVE_LIGHT) {
+                    prepareDefaultFramePreview();
                 }
                 selectScene(Motion.AOD);
 
@@ -1902,11 +2088,39 @@ public class EditorActivity extends UiActivity {
                 append("息屏视觉样式更改为：" + selectedName);
             });
 
-            cardRow.addView(card);
+            (i < columns ? cardRow : secondCardRow).addView(card);
         }
 
-        sheet.addView(cardRow);
-        sheet.addView(panelLiuguang);
+        LinearLayout choices = new LinearLayout(this);
+        choices.setOrientation(LinearLayout.VERTICAL);
+        choices.addView(cardRow);
+        LinearLayout.LayoutParams secondRowParams = new LinearLayout.LayoutParams(-1, -2);
+        secondRowParams.topMargin = ui.dp(8);
+        choices.addView(secondCardRow, secondRowParams);
+        choices.addView(panelLiuguang);
+
+        ScrollView choicesScroll = new ScrollView(this);
+        choicesScroll.addView(choices);
+        sheet.addView(choicesScroll, new LinearLayout.LayoutParams(-1, -2, 1f));
+
+        LinearLayout positionRow = new LinearLayout(this);
+        positionRow.setGravity(Gravity.CENTER_VERTICAL);
+        positionRow.setPadding(0, ui.dp(10), 0, 0);
+        TextView positionHint = new TextView(this);
+        positionHint.setText("也可单指拖动预览");
+        positionHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+        positionHint.setTextColor(0xFF8E8E93);
+        positionRow.addView(positionHint, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView adjustPosition = pillButton("调整位置", 0xFF3A3A3C, 0xFFFFFFFF);
+        adjustPosition.setOnClickListener(v -> {
+            if (desktopSource == LastSet.KIND_DYNAMIC) {
+                toast("请先选择一种息屏样式");
+            } else if (controllerHolder[0] != null && controllerHolder[0].dismissImmediately()) {
+                showAodPositionDialog();
+            }
+        });
+        positionRow.addView(adjustPosition, new LinearLayout.LayoutParams(ui.dp(84), ui.dp(36)));
+        sheet.addView(positionRow);
 
         TextView btnDone = pillButton("完成", ui.accentBlue(), 0xFFFFFFFF);
         btnDone.setOnClickListener(v -> {
@@ -1926,6 +2140,119 @@ public class EditorActivity extends UiActivity {
         controller.setupAndShow();
     }
 
+    private void showAodPositionDialog() {
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Translucent_NoTitleBar);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        FrameLayout scrim = new FrameLayout(this);
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setClickable(true);
+        sheet.setMotionEventSplittingEnabled(false);
+        sheet.setBackground(ui.rounded(0xFF1E1E22, 24));
+        int padding = ui.dp(18);
+        sheet.setPadding(padding, ui.dp(14), padding, ui.dp(14) + mNavInsetBottom);
+        scrim.setOnApplyWindowInsetsListener((v, insets) -> {
+            int navBottom = UiActivity.getNavigationBarInsetBottom(v, insets);
+            sheet.setPadding(padding, ui.dp(14), padding, ui.dp(14) + navBottom);
+            return insets;
+        });
+        scrim.addView(sheet, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("息屏位置");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView reset = pillButton("恢复位置", 0xFF3A3A3C, 0xFFFFFFFF);
+        titleRow.addView(reset, new LinearLayout.LayoutParams(ui.dp(84), ui.dp(36)));
+        sheet.addView(titleRow);
+
+        SeekBar horizontal = addAodPositionSlider(sheet, "水平位置", false);
+        SeekBar vertical = addAodPositionSlider(sheet, "垂直位置", true);
+        reset.setOnClickListener(v -> {
+            updateAodPosition(0);
+            horizontal.setProgress(0);
+            vertical.setProgress(0);
+        });
+
+        BottomSheetController controller = new BottomSheetController(
+                dialog, scrim, sheet, this::endAodPositionDrag);
+        scrim.setOnClickListener(v -> controller.dismissWithAnimation());
+        TextView done = pillButton("完成", ui.accentBlue(), 0xFFFFFFFF);
+        done.setOnClickListener(v -> controller.dismissWithAnimation());
+        sheet.addView(done, new LinearLayout.LayoutParams(-1, ui.dp(40)));
+        controller.setupAndShow();
+    }
+
+    private SeekBar addAodPositionSlider(LinearLayout sheet, String label, boolean vertical) {
+        LinearLayout header = new LinearLayout(this);
+        TextView title = new TextView(this);
+        title.setText(label);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        title.setTextColor(0xFFE5E5EA);
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView offsetLabel = new TextView(this);
+        offsetLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+        offsetLabel.setTextColor(0xFF8E8E93);
+        header.addView(offsetLabel);
+        LinearLayout.LayoutParams headerParams = new LinearLayout.LayoutParams(-1, -2);
+        headerParams.topMargin = ui.dp(8);
+        sheet.addView(header, headerParams);
+
+        float units = AodStyleSettings.POSITION_UNITS;
+        float centerLimit = AodStyleSettings.CENTER_LIMIT;
+        float defaultOffset = vertical ? Motion.AOD_Y : 0f;
+        float density = getResources().getDisplayMetrics().density;
+        float axisDp = (vertical ? previewImage.getHeight() : previewImage.getWidth()) / density;
+        int position = currentAodPosition();
+        float offset = vertical ? -AodStyleSettings.positionY(position) : AodStyleSettings.positionX(position);
+
+        SeekBar slider = new SeekBar(this);
+        slider.setMin(Math.round((defaultOffset - centerLimit) * units));
+        slider.setMax(Math.round((defaultOffset + centerLimit) * units));
+        slider.setProgress(Math.round(offset * units));
+        slider.setKeyProgressIncrement(Math.max(1, Math.round(units / Math.max(1f, axisDp))));
+        slider.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        slider.setContentDescription(label);
+        ui.styleSeekBar(slider);
+        offsetLabel.setText(formatAodPositionOffset(offset, axisDp));
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                float newOffset = progress / units;
+                offsetLabel.setText(formatAodPositionOffset(newOffset, axisDp));
+                if (!fromUser) return;
+                int current = currentAodPosition();
+                float x = vertical ? AodStyleSettings.positionX(current) : newOffset;
+                float y = vertical ? -newOffset : AodStyleSettings.positionY(current);
+                updateAodPosition(AodStyleSettings.packPosition(x, y));
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                previewImage.setAodPositionGuidesVisible(true);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                previewImage.setAodPositionGuidesVisible(false);
+            }
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, ui.dp(44));
+        params.bottomMargin = ui.dp(4);
+        sheet.addView(slider, params);
+        return slider;
+    }
+
+    private static String formatAodPositionOffset(float offset, float axisDp) {
+        int dp = Math.round(offset * axisDp);
+        return (dp > 0 ? "+" : "") + dp + "dp";
+    }
+
     // =====================================================================
     // 动作
     // =====================================================================
@@ -1938,8 +2265,8 @@ public class EditorActivity extends UiActivity {
         APPLY_IN_FLIGHT.set(false);
     }
 
-    static String resolvePreparingApplyProgressMessage() {
-        return "正在准备备份…";
+    static String resolvePreparingApplyProgressMessage(boolean backupOriginal) {
+        return backupOriginal ? "正在准备备份…" : resolveApplyingStageProgressMessage();
     }
 
     static String resolveInitialApplyProgressMessage(boolean hasValidBackup) {
@@ -2081,6 +2408,9 @@ public class EditorActivity extends UiActivity {
         final int pendingSource;
         final String pendingWall;
         final boolean pendingFollow;
+        final boolean backupOriginal;
+        final int pendingPhotoTextures;
+        final String pendingAodPositions;
 
         ApplyTxRequest(
                 String draftSessionId,
@@ -2089,7 +2419,10 @@ public class EditorActivity extends UiActivity {
                 ClockSettings.Config pendingLock,
                 int pendingSource,
                 String pendingWall,
-                boolean pendingFollow) {
+                boolean pendingFollow,
+                boolean backupOriginal,
+                int pendingPhotoTextures,
+                String pendingAodPositions) {
             this.draftSessionId = draftSessionId;
             this.pendingStyle = pendingStyle;
             this.pendingAod = pendingAod;
@@ -2097,6 +2430,9 @@ public class EditorActivity extends UiActivity {
             this.pendingSource = pendingSource;
             this.pendingWall = pendingWall;
             this.pendingFollow = pendingFollow;
+            this.backupOriginal = backupOriginal;
+            this.pendingPhotoTextures = pendingPhotoTextures;
+            this.pendingAodPositions = pendingAodPositions;
         }
     }
 
@@ -2105,7 +2441,6 @@ public class EditorActivity extends UiActivity {
         PreModuleWallpaperBackup.BackupPrepResult ensureBackupBeforeApply(Context ctx);
         PreModuleWallpaperBackup.RollbackResult rollbackCreatedBackupIfUnapplied(
                 Context ctx, PreModuleWallpaperBackup.PreApplyBaseline baseline);
-        void syncAliveScope(Context ctx, String pendingWall);
         String setDynamicWallpaper(Context ctx, String pkg, String cls);
         String setDualWallpaper(Context ctx, String pkg, String homeCls, String lockCls);
         PreModuleWallpaperBackup.SlotVerifyResult verifyAppliedSlots(
@@ -2195,21 +2530,22 @@ public class EditorActivity extends UiActivity {
                         false, false, null);
             }
 
-            String stageMsg = resolveInitialApplyProgressMessage(env.hasValidBackup(ctx));
-            env.onLog("…应用开始：" + stageMsg);
-            env.onStageMessage(stageMsg);
-
-            // 0. 首次写入任何状态/壁纸前，必须在同一事务锁内可靠备份；失败则立即中止，零写入
-            PreModuleWallpaperBackup.BackupPrepResult prep = env.ensureBackupBeforeApply(ctx);
-            if (!prep.ok) {
-                env.onLog("✖ 备份失败，已中止应用：" + prep.message);
-                return new ApplyTxResult(
-                        false, true, false, req.pendingSource, req.pendingFollow,
-                        "应用中止：" + prep.message,
-                        "无法备份当前壁纸", prep.message, prep.message,
-                        false, false, prep);
+            PreModuleWallpaperBackup.BackupPrepResult prep = null;
+            if (req.backupOriginal) {
+                String stageMsg = resolveInitialApplyProgressMessage(env.hasValidBackup(ctx));
+                env.onLog("…应用开始：" + stageMsg);
+                env.onStageMessage(stageMsg);
+                prep = env.ensureBackupBeforeApply(ctx);
+                if (!prep.ok) {
+                    env.onLog("✖ 原壁纸备份失败：" + prep.message);
+                    return new ApplyTxResult(
+                            false, true, false, req.pendingSource, req.pendingFollow,
+                            "应用中止：" + prep.message,
+                            "无法备份当前壁纸", prep.message, prep.message,
+                            false, false, prep);
+                }
+                env.onLog("⓪ " + prep.message);
             }
-            env.onLog("⓪ " + prep.message);
             env.onStageMessage(resolveApplyingStageProgressMessage());
 
             // 1. 在首次提交模块配置或照片之前创建完整持久事务日志（PENDING 状态覆盖至壁纸绑定与核验完成）
@@ -2233,6 +2569,10 @@ public class EditorActivity extends UiActivity {
 
             try {
                 // 2. 在 PENDING 事务边界内持久化样式与时钟设置
+                if (req.pendingAodPositions != null
+                        && !AodStyleSettings.savePositionsStrict(ctx, req.pendingAodPositions)) {
+                    throw new java.io.IOException("持久化息屏位置失败");
+                }
                 if (req.pendingStyle != -1) {
                     if (!AodStyleSettings.setStyleStrict(ctx, req.pendingStyle)) {
                         throw new java.io.IOException("持久化息屏视觉样式失败");
@@ -2246,19 +2586,19 @@ public class EditorActivity extends UiActivity {
                 }
 
                 if (isDynamic) {
-                    env.syncAliveScope(ctx, req.pendingWall);
-                    env.onLog("① 动态壁纸统管桌面+锁屏+息屏 (which=3)：" + req.pendingWall);
-                    if (!LastSet.saveStrict(ctx, req.pendingSource, req.pendingWall)) {
+                    DynamicWallpapers.Entry entry = DynamicWallpapers.find(req.pendingWall);
+                    if (entry == null) {
+                        throw new TxReturnedFailureException("应用动态壁纸失败", "请从动态壁纸库选择一款内置壁纸");
+                    }
+                    env.onLog("① 应用内置动态壁纸到桌面、锁屏和息屏：" + entry.label);
+                    if (!LastSet.saveStrict(ctx, req.pendingSource, entry.selection())) {
                         throw new java.io.IOException("持久化壁纸来源偏好失败");
                     }
-                    int slash = req.pendingWall.indexOf('/');
-                    String targetPkg = slash > 0 ? req.pendingWall.substring(0, slash) : "";
-                    String targetCls = slash > 0 ? req.pendingWall.substring(slash + 1) : "";
-                    String res = (slash > 0)
-                            ? env.setDynamicWallpaper(ctx, targetPkg, targetCls)
-                            : "无效组件 " + req.pendingWall;
+                    String targetPkg = ctx.getPackageName();
+                    String targetCls = targetPkg + ".QihangDynamicWallpaper";
+                    String res = env.setDynamicWallpaper(ctx, targetPkg, targetCls);
                     sb.append("动态壁纸(三态)=").append(res);
-                    boolean textOk = slash > 0 && Root.isSetWallSuccess(res);
+                    boolean textOk = Root.isSetWallSuccess(res);
                     PreModuleWallpaperBackup.SlotVerifyResult slotVer = textOk
                             ? env.verifyAppliedSlots(ctx, false, targetPkg, targetCls, null, null)
                             : new PreModuleWallpaperBackup.SlotVerifyResult(false, "底层命令返回未通过严格校验");
@@ -2273,6 +2613,10 @@ public class EditorActivity extends UiActivity {
                             true, false, true, req.pendingSource, req.pendingFollow,
                             sb.toString(), "", "", "", true, false, prep);
                 } else {
+                    if (req.pendingPhotoTextures >= 0
+                            && !PhotoTextureSettings.saveStrict(ctx, req.pendingPhotoTextures)) {
+                        throw new java.io.IOException("持久化锁屏和桌面纹理失败");
+                    }
                     if (finalSource == LastSet.KIND_DYNAMIC) {
                         finalSource = req.pendingFollow ? LastSet.KIND_FOLLOW : LastSet.KIND_PHOTO;
                     }
@@ -2318,13 +2662,14 @@ public class EditorActivity extends UiActivity {
                 PhotoDraftStore.RollbackResult rb =
                         PhotoDraftStore.rollbackTransactionSnapshot(ctx, snapshot, true);
                 String backupNote = "";
-                if (rb.ok && prep.createdNew) {
+                boolean createdBackup = prep != null && prep.createdNew;
+                if (rb.ok && createdBackup) {
                     PreModuleWallpaperBackup.RollbackResult bRb =
                             env.rollbackCreatedBackupIfUnapplied(ctx, prep.baseline);
                     backupNote = bRb.deleted
                             ? "，并已确认零改动后清理本次新建备份"
                             : ("，且已保留新建备份快照（" + bRb.reason + "）");
-                } else if (!rb.ok && prep.createdNew) {
+                } else if (!rb.ok && createdBackup) {
                     backupNote = "，且已保留新建备份快照与未完成事务证据";
                 }
                 final String fullMsg;
@@ -2348,14 +2693,33 @@ public class EditorActivity extends UiActivity {
         }
     }
 
-    /** 「应用」：先在事务锁内确保应用前状态可靠备份，再创建持久日志、提交草稿并写入壁纸；任一步失败/异常完整回滚。 */
-    private void applyScene() {
+    private void showApplyOptions() {
+        if (APPLY_IN_FLIGHT.get()) {
+            toast("正在应用中，请勿重复点击");
+            return;
+        }
+        int theme = ui.night
+                ? android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK
+                : android.app.AlertDialog.THEME_DEVICE_DEFAULT_LIGHT;
+        new android.app.AlertDialog.Builder(this, theme)
+                .setTitle("应用壁纸")
+                .setMessage("备份可用于恢复应用前的壁纸。")
+                .setNeutralButton("取消", null)
+                .setNegativeButton("直接应用", (dialog, which) -> applyScene(false))
+                .setPositiveButton("备份并应用", (dialog, which) -> applyScene(true))
+                .show();
+    }
+
+    private void applyScene(boolean backupOriginal) {
         final int pendingStyle = mPendingAodVisualStyle;
         final ClockSettings.Config pendingAod = mPendingAodConfig;
         final ClockSettings.Config pendingLock = mPendingLockConfig;
         final int pendingSource = desktopSource;
         final String pendingWall = wallpaper;
         final boolean pendingFollow = followLock;
+        final int pendingPhotoTextures = mPendingPhotoTextures;
+        final String pendingAodPositions = mAodPositionsEdited
+                ? AodStyleSettings.encodePositions(mPendingAodPositions) : null;
         final String applyDraftId = draftSessionId;
         final Object workerLeaseToken = new Object();
 
@@ -2363,7 +2727,7 @@ public class EditorActivity extends UiActivity {
                 () -> toast("正在应用中，请勿重复点击"),
                 () -> {
                     append("应用：" + sceneName(scene));
-                    showApplyProgressUi(resolvePreparingApplyProgressMessage());
+                    showApplyProgressUi(resolvePreparingApplyProgressMessage(backupOriginal));
                 },
                 () -> {
                     PhotoDraftStore.acquireDraftLease(applyDraftId, workerLeaseToken);
@@ -2379,7 +2743,10 @@ public class EditorActivity extends UiActivity {
                                         pendingLock,
                                         pendingSource,
                                         pendingWall,
-                                        pendingFollow);
+                                        pendingFollow,
+                                        backupOriginal,
+                                        pendingPhotoTextures,
+                                        pendingAodPositions);
                                 ApplyTxEnv env = new ApplyTxEnv() {
                                     @Override
                                     public boolean hasValidBackup(Context ctx) {
@@ -2398,31 +2765,8 @@ public class EditorActivity extends UiActivity {
                                     }
 
                                     @Override
-                                    public void syncAliveScope(Context ctx, String wall) {
-                                        if (wall != null && wall.startsWith(ALIVE_PKG + "/")) {
-                                            int userId = android.os.Process.myUid() / 100000;
-                                            String db = Root.appProcess(ctx, "com.hyperalive.aod.root.LspDb",
-                                                    "-get", ctx.getPackageName(), String.valueOf(userId));
-                                            int enabledFlag = LspState.parseEnabledFlag(db);
-                                            boolean hasAliveScope = LspState.hasScopeToken(db, ALIVE_PKG);
-                                            if (enabledFlag == 0) {
-                                                append("⓪ 检测到 LSPosed 模块已停用，跳过作用域同步（保持停用状态）");
-                                            } else if (enabledFlag == 1 && !hasAliveScope) {
-                                                append("⓪ 同步 LSPosed 作用域加入 " + ALIVE_PKG);
-                                                Root.lsposedSync(ctx,
-                                                        new String[]{"system", "com.android.systemui",
-                                                                "miui.systemui.plugin", "com.miui.aod",
-                                                                "com.android.thememanager", "com.hyperalive.aod",
-                                                                ALIVE_PKG});
-                                            } else if (enabledFlag < 0 || !hasAliveScope) {
-                                                append("⓪ LSPosed 未就绪，跳过作用域同步");
-                                            }
-                                        }
-                                    }
-
-                                    @Override
                                     public String setDynamicWallpaper(Context ctx, String pkg, String cls) {
-                                        return Root.setWallpaper(ctx, pkg, cls, 3);
+                                        return Root.setWallpaperComponentRaw(ctx, pkg, cls, 3);
                                     }
 
                                     @Override
@@ -2459,9 +2803,10 @@ public class EditorActivity extends UiActivity {
                                     committedCleanly = true;
                                     if (res.dynamicMode) {
                                         final long commitSeq = sCommittedApplySeq.incrementAndGet();
+                                        sendReloadPhoto();
                                         sendMode(Motion.HOME, "应用动态壁纸");
                                         schedulePostApplyAlignment(
-                                                getApplicationContext(), commitSeq, false, "应用动态壁纸(延时对齐)");
+                                                getApplicationContext(), commitSeq, true, "应用动态壁纸(延时对齐)");
                                         runOnUiThread(() -> {
                                             if (!isFinishing() && !isDestroyed()) {
                                                 toast("已应用");
@@ -2560,11 +2905,16 @@ public class EditorActivity extends UiActivity {
                 int theme = ui.night
                         ? android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK
                         : android.app.AlertDialog.THEME_DEVICE_DEFAULT_LIGHT;
-                new android.app.AlertDialog.Builder(EditorActivity.this, theme)
+                android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(EditorActivity.this, theme)
                         .setTitle(res.failTitle)
-                        .setMessage(res.fullFailureMessage)
-                        .setPositiveButton("我知道了", null)
-                        .show();
+                        .setMessage(res.fullFailureMessage);
+                if (res.prep != null && !res.prep.ok) {
+                    builder.setNegativeButton("取消", null)
+                            .setPositiveButton("直接应用", (dialog, which) -> applyScene(false));
+                } else {
+                    builder.setPositiveButton("我知道了", null);
+                }
+                builder.show();
             }
         });
     }

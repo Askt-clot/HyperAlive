@@ -1,5 +1,6 @@
 package com.hyperalive.aod.hook;
 
+import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,6 +22,7 @@ public final class AodHook {
     private AodHook() {}
 
     public static void install(ClassLoader cl) {
+        installClockPositionGate(cl);
         HookUtils.log("开始安装 AOD 模块 hooks...");
         SystemUiHook.installClockDrawGate(cl);
 
@@ -206,6 +208,7 @@ public final class AodHook {
         String name = cls.getSimpleName();
         if (!("AODView".equals(name) || "AodContainerView".equals(name)
                 || name.contains("LinkageStyleClockView"))) return;
+        installClockPositionGate(cls.getClassLoader());
         Method visible = null;
         try {
             visible = cls.getDeclaredMethod("setClockViewVisible", boolean.class);
@@ -232,6 +235,32 @@ public final class AodHook {
         Context ctx = view.getContext();
         return ViewTreeSweeper.isClockSleeping(ctx) && StateCoordinator.isAodEnabled(ctx)
                 && !StateCoordinator.isFullScreenAod(ctx) && !StateCoordinator.isCustomClockEnabled(ctx, 0);
+    }
+
+    private static final Set<Class<?>> sClockPositionControllers = new HashSet<>();
+
+    /** The outgoing keyguard is already moving to the AOD position. Put the incoming
+     * AOD clock at that same endpoint before its native fade starts. */
+    static synchronized void installClockPositionGate(ClassLoader loader) {
+        Class<?> controller = HookUtils.findClass("com.miui.aod.linkagestyle.LinkageStyleController", loader);
+        if (controller == null || !sClockPositionControllers.add(controller)) return;
+        HookUtils.hookMethod(controller, "aodLinkageTransAnimation", new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam param) {
+                if (!StateCoordinator.isLockWallpaperActiveFast() || !Boolean.TRUE.equals(param.args[4])) return;
+                View clock = (View) param.args[0];
+                if (clock == null || !"clock_container".equals(StateCoordinator.idNameOf(clock))
+                        || !nativeAodActive(clock) || StateCoordinator.isCustomClockEnabled(clock.getContext(), 1)) return;
+                float from = (Float) param.args[1];
+                float to = (Float) param.args[2];
+                if (Float.isFinite(from) && Float.isFinite(to)) {
+                    NativeClockHandoff.setDestination(clock, to);
+                    if (from != to) {
+                        param.args[1] = to;
+                        HookUtils.log("Native AOD clock aligned before fade: " + from + " -> " + to);
+                    }
+                }
+            }
+        }, View.class, float.class, float.class, AnimatorListenerAdapter.class, boolean.class);
     }
 
     /** Repair an already delivered clock_show=false once per sleep/config activation. */

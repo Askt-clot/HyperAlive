@@ -9,7 +9,7 @@ import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 
 /**
- * 魅族「留光」(style=1) 与「星月」(style=2) 官方相框与艺术遮罩合成渲染管线。
+ * 照片遮罩与留光双相框的合成渲染管线。
  *
  * 1:1 还原魅族 Flyme / OpenAlive 官方 chromakey 渲染与多层遮罩合成逻辑：
  *   - 留光 (leave_light, style=1):
@@ -109,10 +109,11 @@ final class LiuguangPipeline {
             "in vec2 a_uv;\n" +
             "uniform mat4 u_modelMatrix;\n" +
             "uniform mat4 u_contentMatrix;\n" +
+            "uniform bool u_full_photo;\n" +
             "out vec2 v_snapshot_texCoord;\n" +
             "out vec2 v_content_texCoord;\n" +
             "void main() {\n" +
-            "    gl_Position = u_modelMatrix * vec4(a_pos, 0.0, 1.0);\n" +
+            "    gl_Position = u_full_photo ? vec4(a_pos.x, -a_pos.y, 0.0, 1.0) : u_modelMatrix * vec4(a_pos, 0.0, 1.0);\n" +
             "    v_snapshot_texCoord = a_uv;\n" +
             "    v_content_texCoord = (u_contentMatrix * vec4(a_uv, 0.0, 1.0)).xy;\n" +
             "}\n";
@@ -131,6 +132,7 @@ final class LiuguangPipeline {
             "uniform mat3 u_rear_transform;\n" +
             "uniform float u_photo_alpha;\n" +
             "uniform float u_home_ratio;\n" +
+            "uniform bool u_full_photo;\n" +
             "uniform int u_pair;\n" +
             "uniform vec3 u_first_color;\n" +
             "\n" +
@@ -138,7 +140,18 @@ final class LiuguangPipeline {
             "    return blend * opacity + base * (1.0 - opacity);\n" +
             "}\n" +
             "\n" +
+            "vec3 wallpaperColor(vec2 uv) {\n" +
+            "    if (u_home_ratio >= 1.0) return texture(u_home_photo, uv).rgb;\n" +
+            "    vec3 lockColor = texture(u_photo, uv).rgb;\n" +
+            "    if (u_home_ratio <= 0.0) return lockColor;\n" +
+            "    return mix(lockColor, texture(u_home_photo, uv).rgb, u_home_ratio);\n" +
+            "}\n" +
+            "\n" +
             "void main() {\n" +
+            "    if (u_full_photo) {\n" +
+            "        fragColor = vec4(wallpaperColor(v_snapshot_texCoord), 1.0);\n" +
+            "        return;\n" +
+            "    }\n" +
             "    vec3 videoColor = texture(u_mask, v_snapshot_texCoord).rgb;\n" +
             "    vec3 finalColor = vec3(0.0);\n" +
             "    if (u_pair == 1) {\n" +
@@ -152,20 +165,18 @@ final class LiuguangPipeline {
             "            finalColor = blendNormal(finalColor, u_first_color, videoColor.r);\n" +
             "        }\n" +
             "    }\n" +
-            "    vec2 fullUv = clamp(v_content_texCoord, 0.0, 1.0);\n" +
-            "    vec3 fullColor = texture(u_photo, fullUv).rgb;\n" +
-            "    if (u_home_ratio > 0.0001) {\n" +
-            "        vec3 homeColor = texture(u_home_photo, fullUv).rgb;\n" +
-            "        fullColor = mix(fullColor, homeColor, clamp(u_home_ratio, 0.0, 1.0));\n" +
-            "    }\n" +
-            "    vec3 contentColor = fullColor;\n" +
+            "    vec3 contentColor;\n" +
             "    if (u_pair == 1) {\n" +
+            "        finalColor = blendNormal(finalColor, vec3(1.0), videoColor.b);\n" +
             "        vec2 frameUv = (u_frame_crop * vec3(v_snapshot_texCoord - vec2(0.5, 348.5 / 720.0), 1.0)).xy;\n" +
             "        vec3 frameColor = texture(u_frame_photo, clamp(frameUv, 0.0, 1.0)).rgb;\n" +
-            "        contentColor = mix(fullColor, frameColor, clamp(u_photo_alpha, 0.0, 1.0));\n" +
+            "        float alpha = clamp(u_photo_alpha, 0.0, 1.0);\n" +
+            "        contentColor = alpha >= 1.0 ? frameColor : mix(wallpaperColor(clamp(v_content_texCoord, 0.0, 1.0)), frameColor, alpha);\n" +
+            "    } else {\n" +
+            "        contentColor = wallpaperColor(clamp(v_content_texCoord, 0.0, 1.0));\n" +
             "    }\n" +
             "    finalColor = blendNormal(finalColor, contentColor, videoColor.g);\n" +
-            "    finalColor = blendNormal(finalColor, vec3(1.0), videoColor.b);\n" +
+            "    if (u_pair != 1) finalColor = blendNormal(finalColor, vec3(1.0), videoColor.b);\n" +
             "    fragColor = vec4(finalColor, 1.0);\n" +
             "}\n";
 
@@ -188,6 +199,7 @@ final class LiuguangPipeline {
     private int uPhotoAlpha;
     private int uHomeRatio;
     private int uPair;
+    private int uFullPhoto;
     private int uFirstColor;
 
     private final float[] model = new float[16];
@@ -204,7 +216,7 @@ final class LiuguangPipeline {
     LiuguangPipeline(Context context, int initialStyle) {
         this.context = context.getApplicationContext();
         this.activeStyle = initialStyle;
-        this.maskFrames = MaskFrames.forStyle(this.context, this.activeStyle);
+        this.maskFrames = new MaskFrames(this.context, PhotoMaskStyle.forId(this.activeStyle));
         initGl();
     }
 
@@ -214,7 +226,7 @@ final class LiuguangPipeline {
             if (maskFrames != null) {
                 maskFrames.close();
             }
-            maskFrames = MaskFrames.forStyle(context, style);
+            maskFrames = new MaskFrames(context, PhotoMaskStyle.forId(style));
         }
     }
 
@@ -231,6 +243,7 @@ final class LiuguangPipeline {
         uPhotoAlpha = GLES30.glGetUniformLocation(program, "u_photo_alpha");
         uHomeRatio = GLES30.glGetUniformLocation(program, "u_home_ratio");
         uPair = GLES30.glGetUniformLocation(program, "u_pair");
+        uFullPhoto = GLES30.glGetUniformLocation(program, "u_full_photo");
         uFirstColor = GLES30.glGetUniformLocation(program, "u_first_color");
 
         FloatBuffer buf = ByteBuffer.allocateDirect(QUAD_VERTS.length * 4)
@@ -267,20 +280,21 @@ final class LiuguangPipeline {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE);
     }
 
-    void render(int photoTex, int homeTex, int frameTex, float homeRatio, Motion motion, int width, int height) {
-        render(photoTex, homeTex, frameTex, homeRatio, motion, width, height, activeStyle);
-    }
-
-    void render(int photoTex, int homeTex, int frameTex, float homeRatio, Motion motion, int width, int height, int style) {
+    boolean render(int photoTex, int homeTex, int frameTex, Motion motion, int width, int height, int style) {
         if (program == 0 || maskTexture == 0 || photoTex == 0 || motion == null || width <= 0 || height <= 0) {
-            return;
+            return false;
         }
 
         setStyle(style);
 
+        boolean isPaired = activeStyle == AodStyleSettings.STYLE_LEAVE_LIGHT;
+        boolean fullPhoto = isPaired && motion.frameExpanded();
         long micros = motion.frameMicros();
         int frameIdx = maskFrames.getFrameIndex(micros);
-        maskFrames.upload(frameIdx, maskTexture);
+        if (!maskFrames.upload(frameIdx, maskTexture) && isPaired && !fullPhoto) {
+            // The compositor keeps the previous complete frame when the matching mask is unavailable.
+            return false;
+        }
 
         // 1. 计算官方 u_modelMatrix 与 u_contentMatrix（对齐 FrameMotion.packet）
         float x = motion.frameX();
@@ -304,8 +318,6 @@ final class LiuguangPipeline {
         Matrix.translateM(contentMatrix, 0, 0.5f, 0.5f, 0f);
         Matrix.scaleM(contentMatrix, 0, aspect / content, 1f / content, 1f);
         Matrix.translateM(contentMatrix, 0, -0.5f, -0.5f, 0f);
-
-        boolean isPaired = (activeStyle == AodStyleSettings.STYLE_LEAVE_LIGHT);
 
         // 2. 计算相框正方形取景矩阵 u_frame_crop（严格对齐 PhotoCropActivity 留光相框 320/720 取景参考框）
         float cropX = 1.0f;
@@ -365,14 +377,17 @@ final class LiuguangPipeline {
         GLES30.glUniformMatrix3fv(uFrameCrop, 1, false, frameCropMatrix, 0);
         GLES30.glUniformMatrix3fv(uRearTransform, 1, false, rearTransformMatrix, 0);
         GLES30.glUniform1f(uPhotoAlpha, motion.framePhotoAlpha());
+        float homeRatio = isPaired ? motion.frameHomeRatio() : motion.homeRatio();
         GLES30.glUniform1f(uHomeRatio, homeTex != 0 ? homeRatio : 0f);
         GLES30.glUniform1i(uPair, isPaired ? 1 : 0);
+        GLES30.glUniform1i(uFullPhoto, fullPhoto ? 1 : 0);
         GLES30.glUniform3f(uFirstColor, 0.15f, 0.27f, 0.32f);
 
         GLES30.glBindVertexArray(vao);
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4);
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0);
         GLES30.glBindVertexArray(0);
+        return true;
     }
 
     void release() {

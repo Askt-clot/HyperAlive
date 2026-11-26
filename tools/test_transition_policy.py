@@ -27,8 +27,9 @@ def _resolve_jdk_tool(name: str) -> str:
         return found
     raise SystemExit(f"Missing JDK tool '{name}': configure JAVA_HOME or PATH")
 
+
 HARNESS = r"""
-import com.hyperalive.aod.TransitionPolicy;
+package com.hyperalive.aod;
 
 public final class TransitionPolicyRegression {
     private static int assertions;
@@ -55,6 +56,15 @@ public final class TransitionPolicyRegression {
         if (actual != expected) {
             throw new AssertionError(scenario + ": expected " + expected
                     + ", got " + actual);
+        }
+    }
+
+    private static void dynamic(String scenario, boolean expected, int mode,
+                                boolean preview, boolean home, boolean visible, boolean fod) {
+        boolean actual = TransitionPolicy.runDynamicWallpaper(mode, preview, home, visible, fod);
+        assertions++;
+        if (actual != expected) {
+            throw new AssertionError(scenario + ": expected " + expected + ", got " + actual);
         }
     }
 
@@ -97,6 +107,17 @@ public final class TransitionPolicyRegression {
         resume("single local AOD cannot invent lock progress", false, false, 0, true, 400, true);
         resume("invalid history time", false, true, 0, true, -1, false);
 
+        dynamic("visible HOME runs", true, 2, false, false, true, false);
+        dynamic("hidden HOME pauses", false, 2, false, false, false, true);
+        dynamic("hidden LOCK pauses", false, 1, false, false, false, true);
+        dynamic("HOME to AOD survives late visibility loss", true, 0, false, false, false, true);
+        dynamic("LOCK to AOD stays active", true, 0, false, false, true, true);
+        dynamic("AOD pauses when FOD disappears", false, 0, false, false, true, false);
+        dynamic("AOD resumes when FOD returns", true, 0, false, false, false, true);
+        dynamic("hidden independent HOME slot remains idle", false, 0, false, true, false, true);
+        dynamic("hidden preview pauses", false, 0, true, false, false, true);
+        dynamic("visible preview ignores device FOD", true, 0, true, false, true, false);
+
         System.out.println("Transition policy: " + assertions + " assertions passed");
     }
 }
@@ -115,7 +136,7 @@ def main():
             "-target", "8", "-d", str(work), str(SOURCE), str(harness),
         ], check=True)
         subprocess.run([
-            _resolve_jdk_tool("java"), "-cp", str(work), "TransitionPolicyRegression",
+            _resolve_jdk_tool("java"), "-cp", str(work), "com.hyperalive.aod.TransitionPolicyRegression",
         ], check=True)
 
 

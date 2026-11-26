@@ -3,7 +3,9 @@ package com.hyperalive.aod;
 /** Original gyro-vector displacement and .87/1 scene crop, on the render thread. */
 final class StereoMotion implements WallpaperMotion {
     private int scene;
-    private float scale,fromScale,targetScale,elapsed,duration;
+    private float scale,fromScale,targetScale;
+    private int durationMs;
+    private final WallpaperTransitionTime sceneTime=new WallpaperTransitionTime();
     private float x,y,z=1,rx,ry,rz,quiet,sensorAge=1;
     private long last=-1,sensorStamp=-1;
     private boolean moving,unlock;
@@ -17,7 +19,7 @@ final class StereoMotion implements WallpaperMotion {
     float shiftX(){return Math.max(-1,Math.min(1,-2*x))*.04f;}
     float shiftY(){return Math.max(-1,Math.min(1,-y))*.04f;}
     /** Apply on the GL thread; retain the current tilt and scene animation. */
-    void configure(int sensitivity,boolean allowAod){
+    synchronized void configure(int sensitivity,boolean allowAod){
         sensitivityGain=multiplier(sensitivity);
         if(this.allowAod!=allowAod&&scene==0){
             sensorStamp=-1;sensorAge=1;rx=ry=rz=0;quiet=1;
@@ -31,14 +33,15 @@ final class StereoMotion implements WallpaperMotion {
         // motion tests. 0 preserves original motion, -50=.1x and +50=2x.
         return (float)Math.pow(value<0?10:2,value/50.0);
     }
-    public void change(int next,boolean animate){
-        scene=next;fromScale=scale;targetScale=next==2&&!keepLock?1:.87f;elapsed=0;
-        unlock=next==2;duration=animate?(unlock?1.15f:.1f):0;
-        if(duration==0)scale=targetScale;
+    public synchronized void change(int next,boolean animate){
+        scene=next;fromScale=scale;targetScale=next==2&&!keepLock?1:.87f;
+        unlock=next==2;durationMs=animate?(unlock?1150:100):0;
+        sceneTime.restart();
+        if(durationMs==0)finishScene();
         if(next==0&&!allowAod){rx=ry=rz=0;moving=false;quiet=1;}
     }
     /** Android gyroscope values in rad/s; sensor timestamp only defines epochs. */
-    void gyroscope(float vx,float vy,float vz,long timestamp){
+    synchronized void gyroscope(float vx,float vy,float vz,long timestamp){
         if((scene==0&&!allowAod)||!Float.isFinite(vx)||!Float.isFinite(vy)||!Float.isFinite(vz))return;
         if(sensorStamp<0||timestamp<=sensorStamp||timestamp-sensorStamp>500_000_000L){
             sensorStamp=timestamp;sensorAge=0;return;
@@ -46,13 +49,9 @@ final class StereoMotion implements WallpaperMotion {
         sensorStamp=timestamp;sensorAge=0;rx=vx;ry=vy;rz=vz;
         if((vx*vx+vy*vy+vz*vz)*sensitivityGain*sensitivityGain>.0004f){quiet=0;moving=true;}
     }
-    public void advance(long now,float speed){
+    public synchronized void advance(long now,float speed){
         float dt=last<0?0:Math.min(.05f,Math.max(0,(now-last)*1e-9f));last=now;
-        if(elapsed<duration){
-            elapsed=Math.min(duration,elapsed+dt);float t=elapsed/duration;
-            float eased=unlock?unlockCurve(t):.5f-.5f*(float)Math.cos(Math.PI*t);
-            scale=fromScale+(targetScale-fromScale)*eased;
-        }
+        advanceScene(now);
         sensorAge+=dt;
         if(sensorAge>.25f){rx=ry=rz=0;}
         float vx=rx*sensitivityGain,vy=ry*sensitivityGain,vz=rz*sensitivityGain;
@@ -76,6 +75,20 @@ final class StereoMotion implements WallpaperMotion {
             z=z*c+(ax*y-ay*x)*s+az*dot*(1-c);x=nx;y=ny;moving=true;
         }
     }
+    public synchronized void advanceScene(long now){
+        if(durationMs==0)return;
+        float t=sceneTime.advance(now)/durationMs;
+        if(t>=1){
+            finishScene();
+            return;
+        }
+        float eased=unlock?unlockCurve(t):.5f-.5f*(float)Math.cos(Math.PI*t);
+        scale=fromScale+(targetScale-fromScale)*eased;
+    }
+    public synchronized void finishScene(){
+        scale=targetScale;
+        durationMs=0;
+    }
     private static float returnAxis(float value,float dt){
         float amount=Math.max(Math.abs(value)*.3f,.18f)*dt;
         return Math.abs(value)<=amount?0:value-Math.copySign(amount,value);
@@ -91,6 +104,10 @@ final class StereoMotion implements WallpaperMotion {
         float a=1-u;return 3*a*a*u*.65f+3*a*u*u+u*u*u;
     }
     public void follow(float x,float y){} // Stereo does not follow the clock's AOD region.
-    public void pause(){last=-1;sensorStamp=-1;sensorAge=1;rx=ry=rz=0;quiet=1;}
-    public boolean active(){return elapsed<duration||moving||x!=0||y!=0;}
+    public void pause(){pause(true);}
+    public synchronized void pause(boolean freezeScene){
+        last=-1;sensorStamp=-1;sensorAge=1;rx=ry=rz=0;quiet=1;
+        if(freezeScene)sceneTime.pause();
+    }
+    public synchronized boolean active(){return durationMs>0||moving||x!=0||y!=0;}
 }

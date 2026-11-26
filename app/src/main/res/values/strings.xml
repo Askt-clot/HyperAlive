@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="dynamic_wallpaper_name">HyperAlive 动态壁纸</string>
     <string name="app_name">HyperAlive</string>
     <string name="xposed_desc">在澎湃OS4上实现魅族alive壁纸</string>
     <string name="wallpaper_name">启航</string>

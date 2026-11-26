@@ -34,7 +34,6 @@ public abstract class UiActivity extends Activity {
     protected static final String TAG = Root.TAG;
 
     /** 桌面槽位用的魅族原生壁纸（默认 CosmicWallpaperV6）。 */
-    protected static final String ALIVE_PKG = "com.flyme.alivewallpaper";
 
     protected MiSettingsUi ui;
     protected LinearLayout col;

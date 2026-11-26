@@ -36,7 +36,10 @@ final class LivePreview {
         // 桌面是动态壁纸：用它自己声明的效果图
         try {
             String comp = LibraryActivity.currentDesktopComponent(ctx);
-            Drawable d = LibraryActivity.thumbnailFor(ctx, comp);
+            if ((ctx.getPackageName() + "/" + QihangDynamicWallpaper.class.getName()).equals(comp)) {
+                comp = LastSet.component(ctx);
+            }
+            Drawable d = DynamicWallpapers.thumbnailFor(ctx, comp);
             Bitmap b = toBitmap(d);
             if (b != null) {
                 Log.i(Root.TAG, "桌面预览=动态壁纸效果图 " + comp);

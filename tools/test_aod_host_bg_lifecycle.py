@@ -33,6 +33,7 @@ def _resolve_jdk_tool(name: str) -> str:
         return found
     raise SystemExit(f"Missing JDK tool '{name}': configure JAVA_HOME or PATH")
 
+
 SHIM_SOURCES = {
     "android/os/Looper.java": r"""
 package android.os;
@@ -308,6 +309,7 @@ public class Intent {
     public static final String ACTION_WALLPAPER_CHANGED = "android.intent.action.WALLPAPER_CHANGED";
     public static final int FLAG_RECEIVER_FOREGROUND = 0x10000000;
     private String action;
+    private final java.util.Map<String, String> strings = new java.util.HashMap<>();
     public Intent() {}
     public Intent(String action) { this.action = action; }
     public String getAction() { return action; }
@@ -315,7 +317,8 @@ public class Intent {
     public Intent addFlags(int flags) { return this; }
     public Intent putExtra(String k, int v) { return this; }
     public Intent putExtra(String k, boolean v) { return this; }
-    public Intent putExtra(String k, String v) { return this; }
+    public Intent putExtra(String k, String v) { strings.put(k, v); return this; }
+    public String getStringExtra(String k) { return strings.get(k); }
     public int getIntExtra(String k, int def) { return def; }
 }
 """,
@@ -632,6 +635,17 @@ import android.view.View;
 public final class AodHook {
     public static void ensureNativeAodVisible(View v, boolean active, long cycle) {}
     public static void installHostLifecycleHooks(View v) {}
+}
+""",
+    "com/hyperalive/aod/hook/NativeClockHandoff.java": r"""
+package com.hyperalive.aod.hook;
+import android.view.View;
+import android.widget.TextView;
+import java.lang.ref.WeakReference;
+import java.util.List;
+final class NativeClockHandoff {
+    static void align(View root, List<WeakReference<TextView>> hours, List<WeakReference<TextView>> minutes) {}
+    static void clear(View root) {}
 }
 """,
 }
@@ -1583,6 +1597,78 @@ public final class AodHostBgLifecycleTest {
                         && hasTraceLog("RESTORE_SKIP_CHANGED "));
     }
 
+    private static void awaitWakeQueue(boolean ownershipQueue) throws InterruptedException {
+        java.util.concurrent.CountDownLatch drained = new java.util.concurrent.CountDownLatch(1);
+        if (ownershipQueue) StateCoordinator.postAsync(drained::countDown);
+        else StateCoordinator.postPowerAsync(drained::countDown);
+        if (!drained.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new AssertionError("Wake test queue did not drain");
+        }
+    }
+
+    private static void testPrimaryWakeRecovery() throws Exception {
+        awaitWakeQueue(true);
+        awaitWakeQueue(false);
+        android.os.Handler.drainMainQueueForTest();
+        final android.app.WallpaperManager wm = new android.app.WallpaperManager();
+        final java.util.concurrent.atomic.AtomicInteger lockWakes = new java.util.concurrent.atomic.AtomicInteger();
+        wm.mockSystemInfo = new android.app.WallpaperInfo("com.hyperalive.aod", "QihangWallpaper");
+        StateCoordinator.sContext = new Context() {
+            @Override public Object getSystemService(String name) {
+                return WALLPAPER_SERVICE.equals(name) ? wm : null;
+            }
+            @Override public void sendBroadcast(android.content.Intent intent) {
+                if (StateCoordinator.ACTION_MODE.equals(intent.getAction())
+                        && "power_wake".equals(intent.getStringExtra(StateCoordinator.EXTRA_STATE))) {
+                    lockWakes.incrementAndGet();
+                }
+            }
+        };
+
+        SystemClock.uptimeMs = 200_000L;
+        StateCoordinator.setCachedWallpaperSlots(true, true);
+        setSleepState(true, true, false);
+        SystemClock.uptimeMs += 11_000L;
+        StateCoordinator.onPrimaryDisplayAwake(false);
+        awaitWakeQueue(true);
+        awaitWakeQueue(false);
+        check("expired ownership is rechecked and the confirmed primary wake is delivered",
+                wm.queryCount > 0 && !StateCoordinator.isSleepingActive() && lockWakes.get() == 1);
+        StateCoordinator.onPrimaryDisplayAwake(false);
+        awaitWakeQueue(false);
+        check("a wake already delivered is not sent again", lockWakes.get() == 1);
+
+        setSleepState(true, true, false);
+        SystemClock.uptimeMs += 11_000L;
+        java.util.concurrent.CountDownLatch resume = new java.util.concurrent.CountDownLatch(1);
+        StateCoordinator.postAsync(() -> {
+            try {
+                resume.await(2, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        try {
+            StateCoordinator.onPrimaryDisplayAwake(false);
+            StateCoordinator.cancelPrimaryWakeRecovery();
+        } finally {
+            resume.countDown();
+        }
+        awaitWakeQueue(true);
+        awaitWakeQueue(false);
+        check("a new primary sleep edge cancels the wake pending ownership verification",
+                StateCoordinator.isSleepingActive() && lockWakes.get() == 1);
+
+        wm.mockLockId = 42;
+        wm.mockLockInfo = new android.app.WallpaperInfo("com.miui.home", "NativeWallpaper");
+        SystemClock.uptimeMs += 11_000L;
+        StateCoordinator.onPrimaryDisplayAwake(false);
+        awaitWakeQueue(true);
+        awaitWakeQueue(false);
+        check("desktop ownership alone cannot recover a lock wallpaper wake",
+                !StateCoordinator.isLockWallpaperActiveFast() && lockWakes.get() == 1);
+    }
+
     public static void main(String[] args) {
         try {
             Resources res = buildRes();
@@ -1596,6 +1682,7 @@ public final class AodHostBgLifecycleTest {
             testLateAttachAfterSweepAndMaskOff(ctx, res);
             testOptInTraceSwitchAndSteadyStateSilence(ctx, res);
             testMutableSentinelLifecycle(ctx, res);
+            testPrimaryWakeRecovery();
             System.out.println("AOD host background lifecycle: " + assertions + " assertions passed");
             System.exit(0);
         } catch (Throwable t) {
@@ -1676,15 +1763,13 @@ def main():
             p.write_text(content, encoding="utf-8")
             tfiles.append(str(p))
 
-        cp_test = os.pathsep.join([str(prod_cls), str(shim_cls)])
-        cp_run = os.pathsep.join([str(test_cls), str(prod_cls), str(shim_cls)])
         subprocess.run([
             javac, "-nowarn", "-encoding", "UTF-8", "-source", "8", "-target", "8",
-            "-cp", cp_test, "-d", str(test_cls),
+            "-cp", os.pathsep.join([str(prod_cls), str(shim_cls)]), "-d", str(test_cls),
         ] + tfiles, check=True)
 
         subprocess.run([
-            java, "-cp", cp_run, "AodHostBgLifecycleTest",
+            java, "-cp", os.pathsep.join([str(test_cls), str(prod_cls), str(shim_cls)]), "AodHostBgLifecycleTest",
         ], check=True)
 
 

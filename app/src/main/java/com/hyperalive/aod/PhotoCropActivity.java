@@ -44,6 +44,7 @@ public final class PhotoCropActivity extends Activity {
     static final String EXTRA_LIUGUANG = "is_liuguang";
     static final String EXTRA_DRAFT_SESSION = "draft_session";
     static final String EXTRA_RESET_CROP = "reset_crop";
+    static final int PREVIEW_DECODE_LIMIT = 2048;
 
     static Intent intent(Context ctx, String stagedFileName, String targetName) {
         return intent(ctx, stagedFileName, targetName, false, null, false);
@@ -122,10 +123,9 @@ public final class PhotoCropActivity extends Activity {
             return;
         }
 
-        Point screen = new Point();
-        getWindowManager().getDefaultDisplay().getRealSize(screen);
-        screenWidth = screen.x > 0 ? screen.x : getResources().getDisplayMetrics().widthPixels;
-        screenHeight = screen.y > 0 ? screen.y : getResources().getDisplayMetrics().heightPixels;
+        Point screen = fullScreenSize(this);
+        screenWidth = screen.x;
+        screenHeight = screen.y;
 
         viewport.setFreeMove(isLiuguang);
         android.content.SharedPreferences cp = (draftSessionId != null)
@@ -232,17 +232,7 @@ public final class PhotoCropActivity extends Activity {
                 if (srcFile == null) {
                     throw new IOException("找不到裁切源文件");
                 }
-                Bitmap decoded = ImageDecoder.decodeBitmap(
-                        ImageDecoder.createSource(srcFile),
-                        (decoder, info, input) -> {
-                            int w1 = info.getSize().getWidth();
-                            int h1 = info.getSize().getHeight();
-                            float scale = Math.min(1f, 2048f / Math.max(w1, h1));
-                            decoder.setTargetSize(
-                                     Math.max(1, Math.round(w1 * scale)),
-                                    Math.max(1, Math.round(h1 * scale)));
-                            decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
-                        });
+                Bitmap decoded = decodeCropSource(ImageDecoder.createSource(srcFile), PREVIEW_DECODE_LIMIT);
                 runOnUiThread(() -> {
                     if (isDestroyed() || isFinishing()) {
                         decoded.recycle();
@@ -469,20 +459,38 @@ public final class PhotoCropActivity extends Activity {
         }
     }
 
-    static Bitmap export(File input, PhotoViewport selection, int outWidth, int outHeight, boolean isLiuguang) throws IOException {
-        Bitmap decoded = ImageDecoder.decodeBitmap(
-                ImageDecoder.createSource(input),
+    static Point fullScreenSize(Context ctx) {
+        Point screen = new Point();
+        WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
+        if (wm != null) wm.getDefaultDisplay().getRealSize(screen);
+        if (screen.x <= 0) screen.x = ctx.getResources().getDisplayMetrics().widthPixels;
+        if (screen.y <= 0) screen.y = ctx.getResources().getDisplayMetrics().heightPixels;
+        return screen;
+    }
+
+    static Bitmap decodeCropSource(ImageDecoder.Source input, float maxDimension) throws IOException {
+        return ImageDecoder.decodeBitmap(input,
                 (decoder, info, src) -> {
                     int w = info.getSize().getWidth();
                     int h = info.getSize().getHeight();
-                    float maxDim = Math.max(outWidth, outHeight);
-                    float scale = Math.min(1f, (maxDim * 1.5f) / Math.max(w, h));
+                    float scale = Math.min(1f, maxDimension / Math.max(w, h));
                     int tw = Math.max(1, Math.round(w * scale));
                     int th = Math.max(1, Math.round(h * scale));
                     decoder.setTargetSize(tw, th);
                     decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
                 });
+    }
 
+    static Bitmap export(File input, PhotoViewport selection, int outWidth, int outHeight, boolean isLiuguang) throws IOException {
+        Bitmap decoded = decodeCropSource(ImageDecoder.createSource(input), Math.max(outWidth, outHeight) * 1.5f);
+        try {
+            return renderCrop(decoded, selection, outWidth, outHeight);
+        } finally {
+            decoded.recycle();
+        }
+    }
+
+    static Bitmap renderCrop(Bitmap decoded, PhotoViewport selection, int outWidth, int outHeight) {
         Bitmap result = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(result);
         // 图片外的区域严格保持纯黑色
@@ -498,7 +506,6 @@ public final class PhotoCropActivity extends Activity {
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         canvas.drawBitmap(decoded, matrix, paint);
 
-        decoded.recycle();
         return result;
     }
 

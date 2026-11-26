@@ -38,6 +38,14 @@ public final class TransitionPolicy {
         return aodEnabled && !fullScreenAod ? AOD : LOCK;
     }
 
+    static boolean runDynamicWallpaper(int mode, boolean preview, boolean homeSlot,
+                                       boolean visible, boolean fodVisible) {
+        if (preview || mode != AOD) return visible;
+        // HyperOS may hide the engine after HOME -> AOD while the wallpaper
+        // surface is still used for the fingerprint-visible AOD scene.
+        return fodVisible && (!homeSlot || visible);
+    }
+
     /**
      * A separate home engine ignores LOCK commands, so its local renderer may
      * still be AOD (or HOME if a command was missed). Its shared, current-cycle

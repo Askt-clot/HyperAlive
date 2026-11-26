@@ -32,12 +32,16 @@ android {
     namespace 'com.hyperalive.aod'
     compileSdk 35
 
+    androidResources {
+        noCompress += ['mp4', 'webp']
+    }
+
     defaultConfig {
         applicationId "com.hyperalive.aod"
         minSdk 29
         targetSdk 35
-        versionCode 20261116
-        versionName "1.0.4"
+        versionCode 20261124
+        versionName "1.0.5"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }

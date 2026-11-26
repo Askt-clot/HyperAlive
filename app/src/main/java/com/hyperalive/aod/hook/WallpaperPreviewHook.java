@@ -9,6 +9,7 @@ import android.view.View;
 
 import com.hyperalive.aod.WallpaperPreviewProvider;
 
+import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
@@ -35,11 +36,11 @@ public final class WallpaperPreviewHook {
 
     private static final HookRegistrar XPOSED_REGISTRAR = HookUtils::hookMethod;
     private static final PreviewReader PROVIDER_PREVIEW_READER =
-            (context, slot) -> readBitmap(context, slot, 2);
+            (context, slot) -> readBitmap(context, providerUri(slot, null), 2);
     private static final PreviewReader PROVIDER_FULLRES_READER =
-            (context, slot) -> readBitmap(context, slot, 1);
+            (context, slot) -> readBitmap(context, providerUri(slot, null), 1);
     private static final OwnershipChecker PROVIDER_OWNERSHIP_CHECKER =
-            WallpaperPreviewHook::checkOwnershipViaProvider;
+            (context, slot) -> checkOwnershipViaProvider(context, providerUri(slot, null));
 
     private static final int MAX_APPLY_INTENTS = 64;
     private static final AtomicLong NEXT_APPLY_GENERATION = new AtomicLong(0L);
@@ -118,7 +119,9 @@ public final class WallpaperPreviewHook {
                 XPOSED_REGISTRAR,
                 PROVIDER_PREVIEW_READER,
                 PROVIDER_FULLRES_READER,
-                PROVIDER_OWNERSHIP_CHECKER);
+                PROVIDER_OWNERSHIP_CHECKER,
+                (context, slot) -> readBitmap(context,
+                        providerUri(slot, WallpaperPreviewProvider.DYNAMIC_PREVIEW_PATH), 1));
     }
 
     public static void installAod(
@@ -127,8 +130,22 @@ public final class WallpaperPreviewHook {
             PreviewReader previewReader,
             PreviewReader fullResReader,
             OwnershipChecker ownershipChecker) {
+        installAod(loader, registrar, previewReader, fullResReader, ownershipChecker, null);
+    }
+
+    private static void installAod(
+            ClassLoader loader,
+            HookRegistrar registrar,
+            PreviewReader previewReader,
+            PreviewReader fullResReader,
+            OwnershipChecker ownershipChecker,
+            PreviewReader dynamicEditorPreviewReader) {
         if (loader == null || registrar == null) return;
-        installBaseTemplateLayerHook(loader, "AOD", registrar, previewReader, fullResReader, ownershipChecker);
+        installBaseTemplateLayerHook(loader, "AOD", registrar, previewReader, fullResReader,
+                ownershipChecker, dynamicEditorPreviewReader);
+        if (dynamicEditorPreviewReader != null) {
+            installEditorFollowThumbnail(loader, registrar, dynamicEditorPreviewReader);
+        }
         installAodApplyChainHooks(loader, registrar, previewReader, fullResReader, ownershipChecker);
     }
 
@@ -139,8 +156,10 @@ public final class WallpaperPreviewHook {
         installThemeManager(
                 loader,
                 XPOSED_REGISTRAR,
-                PROVIDER_PREVIEW_READER,
-                PROVIDER_OWNERSHIP_CHECKER);
+                (context, slot) -> readBitmap(context,
+                        providerUri(slot, WallpaperPreviewProvider.DISPLAY_PREVIEW_PATH), 2),
+                (context, slot) -> checkOwnershipViaProvider(context,
+                        providerUri(slot, WallpaperPreviewProvider.DISPLAY_PREVIEW_PATH)));
     }
 
     public static void installThemeManager(
@@ -182,7 +201,8 @@ public final class WallpaperPreviewHook {
         }
 
         // ThemeManager 同进程渲染预览卡片的 BaseTemplateView.createWallpaperLayer（仅展示，不清除标记/不改坐标）
-        installBaseTemplateLayerHook(loader, "ThemeManager", registrar, previewReader, previewReader, ownershipChecker);
+        installBaseTemplateLayerHook(loader, "ThemeManager", registrar, previewReader, previewReader,
+                ownershipChecker, null);
     }
 
     private static void installBaseTemplateLayerHook(
@@ -191,7 +211,8 @@ public final class WallpaperPreviewHook {
             HookRegistrar registrar,
             PreviewReader cardPreviewReader,
             PreviewReader editablePreviewReader,
-            OwnershipChecker ownershipChecker) {
+            OwnershipChecker ownershipChecker,
+            PreviewReader dynamicEditorPreviewReader) {
         Class<?> template = HookUtils.findClass(EDITOR + "edit.base.BaseTemplateView", loader);
         Class<?> home = HookUtils.findClass(EDITOR + "edit.base.HomeTemplateView", loader);
         Class<?> info = HookUtils.findClass(EDITOR + "data.bean.WallpaperInfo", loader);
@@ -222,13 +243,22 @@ public final class WallpaperPreviewHook {
                         String slot = (home != null && home.isInstance(param.thisObject))
                                 ? "home"
                                 : resolveSlotFromWallpaperInfo(wInfo);
+                        boolean editable = Boolean.TRUE.equals(HookUtils.getField(param.thisObject, "editable"));
+                        if (editable && dynamicEditorPreviewReader != null) {
+                            Bitmap thumbnail = dynamicEditorPreviewReader.read(context, slot);
+                            Object renderInfo = createDynamicEditorPreviewInfo(wInfo, thumbnail, loader);
+                            if (renderInfo != null) {
+                                param.args[1] = renderInfo;
+                                HookUtils.log("WallpaperPreviewHook (AOD): 已注入动态壁纸编辑预览 (" + slot + ")");
+                                return;
+                            }
+                        }
                         // Display-only 路径直接以实时槽位归属为准：ThemeManager/AOD 卡片常携带
                         // isThirdPartyWallpaper=false 与灰色/静态旧 Bitmap，不能因此跳过归属槽位展示注入。
                         if (!isSlotOwnedFresh(context, slot, ownershipChecker)) {
                             return;
                         }
 
-                        boolean editable = Boolean.TRUE.equals(HookUtils.getField(param.thisObject, "editable"));
                         PreviewReader chosenReader = (editable && editablePreviewReader != null)
                                 ? editablePreviewReader
                                 : cardPreviewReader;
@@ -247,6 +277,43 @@ public final class WallpaperPreviewHook {
                 editFragment,
                 String.class);
         HookUtils.log("WallpaperPreviewHook (" + hostTag + "): createWallpaperLayer 精确 Hook=" + hooked);
+    }
+
+    private static Object createDynamicEditorPreviewInfo(Object wallpaperInfo, Bitmap thumbnail, ClassLoader loader) {
+        if (thumbnail == null || thumbnail.getWidth() <= 0 || thumbnail.getHeight() <= 0) return null;
+        // The editor keeps its original wallpaper info for applying the template.
+        Object copy = invokeNoArg(wallpaperInfo, "deepCopy");
+        if (copy == wallpaperInfo || !wallpaperInfo.getClass().isInstance(copy)) return null;
+        Class<?> posClass = findPositionInfoClass(copy, loader);
+        Object position = createValidPositionInfo(posClass, thumbnail.getWidth(), thumbnail.getHeight());
+        if (position == null
+                || !invokeOneArg(copy, "setCurrentWallpaper", Bitmap.class, thumbnail)
+                || !invokeOneArg(copy, "setResourceType", String.class, "image")
+                || !invokeOneArg(copy, "setPositionInfo", posClass, position)) {
+            return null;
+        }
+        return copy;
+    }
+
+    private static void installEditorFollowThumbnail(
+            ClassLoader loader, HookRegistrar registrar, PreviewReader dynamicEditorPreviewReader) {
+        Class<?> home = HookUtils.findClass(EDITOR + "edit.base.HomeTemplateView", loader);
+        if (home == null) return;
+        registrar.hookExact(home, "refreshBar", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (param.hasThrowable()) return;
+                Object button = HookUtils.getField(param.thisObject, "followBtn");
+                if (!(button instanceof View)) return;
+                Object fragment = invokeNoArg(param.thisObject, "getEditFragment");
+                Object lockView = HookUtils.getField(fragment, "lockTemplateView");
+                if (Boolean.TRUE.equals(invokeNoArg(lockView, "getWallpaperHasChanged"))) return;
+                Bitmap thumbnail = dynamicEditorPreviewReader.read(((View) button).getContext(), "lock");
+                if (thumbnail != null) {
+                    invokeOneArg(button, "setPreviewThumbnail", Bitmap.class, thumbnail);
+                }
+            }
+        });
     }
 
     private static void installAodApplyChainHooks(
@@ -1005,8 +1072,15 @@ public final class WallpaperPreviewHook {
         }
     }
 
-    private static boolean checkOwnershipViaProvider(Context context, String slot) {
-        Uri uri = Uri.withAppendedPath(Uri.parse("content://" + WallpaperPreviewProvider.AUTHORITY), slot);
+    private static Uri providerUri(String slot, String directory) {
+        Uri uri = Uri.parse("content://" + WallpaperPreviewProvider.AUTHORITY);
+        if (directory != null) {
+            uri = Uri.withAppendedPath(uri, directory);
+        }
+        return Uri.withAppendedPath(uri, slot);
+    }
+
+    private static boolean checkOwnershipViaProvider(Context context, Uri uri) {
         try (AssetFileDescriptor afd = context.getContentResolver().openAssetFileDescriptor(uri, "r")) {
             return afd != null;
         } catch (Throwable ignored) {
@@ -1138,8 +1212,7 @@ public final class WallpaperPreviewHook {
         }
     }
 
-    private static Bitmap readBitmap(Context context, String slot, int inSampleSize) {
-        Uri uri = Uri.withAppendedPath(Uri.parse("content://" + WallpaperPreviewProvider.AUTHORITY), slot);
+    private static Bitmap readBitmap(Context context, Uri uri, int inSampleSize) {
         try (InputStream stream = context.getContentResolver().openInputStream(uri)) {
             if (stream == null) {
                 return null;
@@ -1147,8 +1220,10 @@ public final class WallpaperPreviewHook {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inSampleSize = Math.max(1, inSampleSize);
             return BitmapFactory.decodeStream(stream, null, options);
+        } catch (FileNotFoundException ignored) {
+            return null;
         } catch (Throwable t) {
-            HookUtils.log("WallpaperPreviewHook: readBitmap 异常 (" + slot + ", sample=" + inSampleSize + "): " + t.getMessage());
+            HookUtils.log("WallpaperPreviewHook: readBitmap 异常 (" + uri.getPath() + ", sample=" + inSampleSize + "): " + t.getMessage());
             return null;
         }
     }

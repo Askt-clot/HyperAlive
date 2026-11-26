@@ -8,6 +8,9 @@ import java.nio.*;
 
 /** Original Bubble lighting and disk background shaders on a portable GL host. */
 final class BubbleRenderer implements WallpaperRenderer {
+    @Override
+    public boolean hasAmbientMotion() { return true; }
+
     final BubbleMotion motion;
     private AssetGl bubble,background;
     private final int[] arrays=new int[2],buffers=new int[4];

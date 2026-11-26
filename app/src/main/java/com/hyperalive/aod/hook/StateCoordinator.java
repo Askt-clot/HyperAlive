@@ -43,11 +43,9 @@ import java.util.Set;
 public final class StateCoordinator {
 
     public static final String ACTION_MODE = "com.hyperalive.aod.CMD";
-    public static final String ACTION_ALIVE = "com.flyme.alivewallpaper.ACTION_ALIVE_WALLPAPER";
     public static final String EXTRA_MODE = "mode";
     public static final String EXTRA_ANIMATE = "animate";
     public static final String EXTRA_STATE = "state";
-    public static final String EXTRA_ALIVE_CMD = "command";
 
     public static final String PROP_SLEEP_AT = "sys.qihang.sleep_at";
     public static final String PROP_WAKE_AT = "sys.qihang.wake_at";
@@ -129,10 +127,11 @@ public final class StateCoordinator {
     }
 
     public static boolean isComponentOwnedByHyperAlive(String pkg, String cls) {
-        if (HookUtils.PKG_SELF.equals(pkg) || HookUtils.PKG_ALIVE.equals(pkg)) {
+        if (HookUtils.PKG_SELF.equals(pkg)) {
             return true;
         }
-        return cls != null && (cls.contains("QihangWallpaper") || cls.contains("QihangHomeWallpaper"));
+        return cls != null && (cls.contains("QihangWallpaper") || cls.contains("QihangHomeWallpaper")
+                || cls.contains("QihangDynamicWallpaper"));
     }
 
     public static boolean isWallpaperInfoOwnedByHyperAlive(WallpaperInfo info) {
@@ -525,6 +524,7 @@ public final class StateCoordinator {
     public static volatile long sWakeAtMs;
     public static volatile long sBiometricWakeAtMs;
     private static volatile long sPowerGeneration;
+    private static long sPrimaryWakeSequence;
 
     public static volatile boolean sLinkageAnimating = false;
     public static volatile long sLinkageStartTime = 0L;
@@ -742,7 +742,7 @@ public final class StateCoordinator {
                 try (BufferedReader br = new BufferedReader(new FileReader(f))) {
                     cmd = br.readLine();
                 }
-                if (cmd != null && (cmd.contains(HookUtils.PKG_SELF) || cmd.contains(HookUtils.PKG_ALIVE))) {
+                if (cmd != null && cmd.contains(HookUtils.PKG_SELF)) {
                     sQihangPids.add(pid);
                     updateUidFromPid(pid);
                     return true;
@@ -950,6 +950,43 @@ public final class StateCoordinator {
                 }
             }
         }, 2000L);
+    }
+
+    public static synchronized void cancelPrimaryWakeRecovery() {
+        sPrimaryWakeSequence++;
+    }
+
+    /** Called for the actual primary PowerGroup wake edge, even if the early wake gate missed it. */
+    public static synchronized void onPrimaryDisplayAwake(boolean biometric) {
+        final long sequence = ++sPrimaryWakeSequence;
+        final long sleepAt = propGetLong(PROP_SLEEP_AT, 0L);
+        if (sleepAt <= 0 || sleepAt < propGetLong(PROP_WAKE_AT, 0L)) return;
+        if (isLockWallpaperActiveFast()) {
+            dispatchPrimaryWake(biometric);
+            return;
+        }
+        final long ownerEpoch = sOwnershipEpoch.get();
+        final long powerGeneration = sPowerGeneration;
+        HookUtils.log("主屏已唤醒，等待核验锁屏壁纸归属");
+        postAsync(() -> {
+            if (ownerEpoch != sOwnershipEpoch.get()) return;
+            if (!isSlotSnapshotActive(sOwnershipSnapshot, SystemClock.uptimeMillis(),
+                    WALLPAPER_OWNED_CACHE_MS, ownerEpoch, SLOT_LOCK)) {
+                refreshWallpaperOwnershipSync(sContext);
+            }
+            synchronized (StateCoordinator.class) {
+                if (sequence != sPrimaryWakeSequence || powerGeneration != sPowerGeneration
+                        || ownerEpoch != sOwnershipEpoch.get() || sleepAt != propGetLong(PROP_SLEEP_AT, 0L)
+                        || !isSleepingActive() || !isLockWallpaperActiveFast()) return;
+                HookUtils.log("锁屏壁纸归属已核验，补发主屏唤醒");
+                dispatchPrimaryWake(biometric);
+            }
+        });
+    }
+
+    private static void dispatchPrimaryWake(boolean biometric) {
+        if (biometric) onBiometricWakeIntent();
+        else onWakeIntent();
     }
 
     public static synchronized void onWakeIntent() {
@@ -1477,12 +1514,6 @@ public final class StateCoordinator {
         return null;
     }
 
-    public static String aliveCmd(int mode) {
-        if (mode == 0) return "action_alive_aod";
-        if (mode == 1) return "action_alive_lock";
-        return "action_alive_launcher";
-    }
-
     public static void broadcastMode(Context ctx, int mode, String state) {
         Intent i = new Intent(ACTION_MODE);
         i.setPackage(HookUtils.PKG_SELF);
@@ -1492,12 +1523,6 @@ public final class StateCoordinator {
         i.putExtra(EXTRA_STATE, state);
         i.putExtra("fod_visible", !"0".equals(HookUtils.propGet("sys.qihang.fod_visible", "1")));
         sendBroadcastSmart(ctx, i);
-
-        Intent alive = new Intent(ACTION_ALIVE);
-        alive.setPackage(HookUtils.PKG_ALIVE);
-        alive.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-        alive.putExtra(EXTRA_ALIVE_CMD, aliveCmd(mode));
-        sendBroadcastSmart(ctx, alive);
     }
 
     public static void broadcastFodVisible(Context ctx, boolean visible) {

@@ -8,6 +8,9 @@ import java.nio.*;
 
 /** Flyme 9 gradient, retaining the original shaders and 100-column sampling mesh. */
 final class GradientRenderer implements WallpaperRenderer {
+    @Override
+    public boolean hasAmbientMotion() { return true; }
+
     private static final int COLUMNS=100;
     final GradientMotion motion;
     private final AssetGl shader;

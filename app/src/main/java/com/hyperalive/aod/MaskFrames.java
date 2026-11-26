@@ -31,21 +31,23 @@ final class MaskFrames implements AutoCloseable {
         boolean decode(int index, ByteBuffer out);
     }
 
-    static final int COUNT = 61;
-    static final int START = 61;
-    static final int END = 62;
-    static final int END_MICROS = 483667;
     static final int CACHE_LIMIT = 16;
     static final int MAX_ALLOCATED = CACHE_LIMIT + 4;
+    private static final int MASK_BYTE_BUDGET = MAX_ALLOCATED * 720 * 720 * MaskDecoder.CHANNELS;
+    private static final int END_SIZE = 720;
 
-    private final AssetManager assets;
     private final String dir;
     private final int count;
     private final int start;
     private final int end;
     private final int fps;
     private final int endMicros;
+    private final int size;
     private final int frameBytes;
+    private final int maxAllocated;
+    private final int cacheLimit;
+    private final int prefetchRadius;
+    private final boolean directedPrefetch;
     private final FrameDecoder decoder;
 
     private final Object lock = new Object();
@@ -63,45 +65,49 @@ final class MaskFrames implements AutoCloseable {
     });
     private volatile boolean closed;
     private int lastUploadedIndex = -1;
-    private boolean textureAllocated = false;
+    private int uploadedSize;
+    private int playbackDirection = 1;
 
-    MaskFrames(Context context, String styleDir) {
-        this(context, styleDir, 61, 120, 483667);
-    }
-
-    MaskFrames(Context context, String styleDir, int frameCount, int fps, int endMicros) {
-        this.assets = context.getApplicationContext().getAssets();
-        this.dir = "masks/" + styleDir;
-        this.count = frameCount;
-        this.start = frameCount;
-        this.end = frameCount + 1;
-        this.fps = fps;
-        this.endMicros = endMicros;
-        this.frameBytes = MaskDecoder.FRAME_BYTES;
-        this.decoder = new FrameDecoder() {
-            @Override
-            public boolean decode(int index, ByteBuffer out) {
-                return MaskDecoder.decode(assets, path(index), out);
-            }
+    MaskFrames(Context context, PhotoMaskStyle style) {
+        AssetManager assets = context.getApplicationContext().getAssets();
+        this.dir = "masks/" + style.folder;
+        this.count = style.frameCount;
+        this.start = count;
+        this.end = count + 1;
+        this.fps = style.fps;
+        this.endMicros = style.endMicros;
+        this.size = style.size;
+        this.frameBytes = size * size * MaskDecoder.CHANNELS;
+        // 1080p 帧更大，按字节限制缓存，预留起止帧和同步/异步解码缓冲。
+        this.maxAllocated = MASK_BYTE_BUDGET / frameBytes;
+        this.cacheLimit = maxAllocated - (MAX_ALLOCATED - CACHE_LIMIT);
+        this.prefetchRadius = size > 720 ? 1 : 3;
+        this.directedPrefetch = style == PhotoMaskStyle.LEAVE_LIGHT;
+        this.decoder = (index, out) -> {
+            int side = sizeOf(index);
+            return MaskDecoder.decode(assets, path(index), out, side * side * MaskDecoder.CHANNELS);
         };
-        // 按需惰性分配 DirectByteBuffer（严格受限于 MAX_ALLOCATED），异步预热 start、end 及首尾过渡帧
         prefetch(start);
         prefetch(end);
         prefetch(0);
         prefetch(1);
-        prefetch(count - 1);
+        prefetch(getFrameIndex(endMicros - 1L));
     }
 
     /** 供离线 JVM 回归测试注入自定义解码器与帧大小，直接验证生产缓冲池/引用计数/驱逐与并发关闭逻辑。 */
     MaskFrames(int frameCount, int fps, int endMicros, int frameBytes, FrameDecoder decoder, boolean autoPrefetch) {
-        this.assets = null;
         this.dir = "masks/test";
         this.count = frameCount;
         this.start = frameCount;
         this.end = frameCount + 1;
         this.fps = fps;
         this.endMicros = endMicros;
+        this.size = 720;
         this.frameBytes = Math.max(16, frameBytes);
+        this.maxAllocated = MAX_ALLOCATED;
+        this.cacheLimit = CACHE_LIMIT;
+        this.prefetchRadius = 3;
+        this.directedPrefetch = false;
         this.decoder = decoder;
         if (autoPrefetch) {
             prefetch(start);
@@ -110,13 +116,6 @@ final class MaskFrames implements AutoCloseable {
             prefetch(1);
             prefetch(count - 1);
         }
-    }
-
-    static MaskFrames forStyle(Context context, int style) {
-        if (style == AodStyleSettings.STYLE_MOON) {
-            return new MaskFrames(context, "moon", 32, 60, 516667);
-        }
-        return new MaskFrames(context, "leave_light", 61, 120, 483667);
     }
 
     int startIndex() {
@@ -133,21 +132,23 @@ final class MaskFrames implements AutoCloseable {
         return Math.min(count - 1, Math.round(micros * (float) fps / 1_000_000f));
     }
 
-    static int frameIndex(long micros) {
-        if (micros <= 0) return START;
-        if (micros >= END_MICROS) return END;
-        return Math.min(COUNT - 1, Math.round(micros * 120f / 1_000_000f));
+    private int sizeOf(int index) {
+        return index == end ? END_SIZE : size;
     }
 
-    static int frameIndexForStyle(int style, long micros) {
-        if (style == AodStyleSettings.STYLE_MOON) {
-            if (micros <= 0) return 32;
-            if (micros >= 516667) return 33;
-            return Math.min(31, Math.round(micros * 60f / 1_000_000f));
+    private void prefetchInPlaybackOrder(int index) {
+        int finalFrame = getFrameIndex(endMicros - 1L);
+        int position = index == start ? -1 : index == end ? finalFrame + 1 : index;
+        int previous = lastUploadedIndex == start ? -1
+                : lastUploadedIndex == end ? finalFrame + 1 : lastUploadedIndex;
+        if (index == start) playbackDirection = 1;
+        else if (index == end) playbackDirection = -1;
+        else if (position != previous) playbackDirection = Integer.compare(position, previous);
+        for (int step = 1; step <= 6; step++) {
+            int frame = position + playbackDirection * step;
+            if (frame < 0 || frame > finalFrame) break;
+            prefetch(frame);
         }
-        if (micros <= 0) return 61;
-        if (micros >= 483667) return 62;
-        return Math.min(60, Math.round(micros * 120f / 1_000_000f));
     }
 
     boolean upload(int index, int textureId) {
@@ -155,21 +156,24 @@ final class MaskFrames implements AutoCloseable {
             return false;
         }
         // 预取后续帧（兼顾正向展开与反向回缩）
-        if (index == start) {
+        if (directedPrefetch) {
+            prefetchInPlaybackOrder(index);
+        } else if (index == start) {
             prefetch(0);
             prefetch(1);
             prefetch(2);
         } else if (index == end) {
-            prefetch(count - 1);
-            prefetch(count - 2);
+            int lastTransitionFrame = getFrameIndex(endMicros - 1L);
+            prefetch(lastTransitionFrame);
+            prefetch(lastTransitionFrame - 1);
         } else {
-            for (int d = 1; d <= 3; d++) {
+            for (int d = 1; d <= prefetchRadius; d++) {
                 if (index + d < count) prefetch(index + d);
                 if (index - d >= 0) prefetch(index - d);
             }
         }
 
-        if (textureAllocated && index == lastUploadedIndex) {
+        if (uploadedSize != 0 && index == lastUploadedIndex) {
             return true;
         }
 
@@ -181,16 +185,17 @@ final class MaskFrames implements AutoCloseable {
         try {
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId);
             GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1);
+            int side = sizeOf(index);
             synchronized (buf) {
                 buf.position(0);
-                if (!textureAllocated) {
+                if (uploadedSize != side) {
                     GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGB,
-                            MaskDecoder.WIDTH, MaskDecoder.HEIGHT, 0,
+                            side, side, 0,
                             GLES30.GL_RGB, GLES30.GL_UNSIGNED_BYTE, buf);
-                    textureAllocated = true;
+                    uploadedSize = side;
                 } else {
                     GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0,
-                            MaskDecoder.WIDTH, MaskDecoder.HEIGHT,
+                            side, side,
                             GLES30.GL_RGB, GLES30.GL_UNSIGNED_BYTE, buf);
                 }
             }
@@ -203,7 +208,8 @@ final class MaskFrames implements AutoCloseable {
 
     void resetTextureState() {
         lastUploadedIndex = -1;
-        textureAllocated = false;
+        uploadedSize = 0;
+        playbackDirection = 1;
     }
 
     private void retainBufferLocked(ByteBuffer buf) {
@@ -264,7 +270,7 @@ final class MaskFrames implements AutoCloseable {
                 + (pinnedStart != null ? 1 : 0)
                 + (pinnedEnd != null ? 1 : 0)
                 + inUseCounts.size();
-        if (resident < MAX_ALLOCATED) {
+        if (resident < maxAllocated) {
             pool.addLast(buf);
         } else {
             allocatedCount = Math.max(inUseCounts.size(), allocatedCount - 1);
@@ -280,7 +286,7 @@ final class MaskFrames implements AutoCloseable {
             retainBufferLocked(buf);
             return buf;
         }
-        if (allocatedCount < MAX_ALLOCATED) {
+        if (allocatedCount < maxAllocated) {
             allocatedCount++;
             buf = ByteBuffer.allocateDirect(frameBytes).order(ByteOrder.nativeOrder());
             retainBufferLocked(buf);
@@ -375,12 +381,12 @@ final class MaskFrames implements AutoCloseable {
                 }
                 return existing;
             }
-            while (cache.size() >= CACHE_LIMIT) {
+            while (cache.size() >= cacheLimit) {
                 if (!iteratorEvictLocked()) {
                     break;
                 }
             }
-            if (cache.size() < CACHE_LIMIT) {
+            if (cache.size() < cacheLimit) {
                 cache.put(index, syncBuf);
             }
             return syncBuf;
@@ -471,12 +477,12 @@ final class MaskFrames implements AutoCloseable {
                 returnToPoolOrDropLocked(buffer);
                 return;
             }
-            while (cache.size() >= CACHE_LIMIT) {
+            while (cache.size() >= cacheLimit) {
                 if (!iteratorEvictLocked()) {
                     break;
                 }
             }
-            if (cache.size() < CACHE_LIMIT) {
+            if (cache.size() < cacheLimit) {
                 cache.put(index, buffer);
             } else {
                 returnToPoolOrDropLocked(buffer);

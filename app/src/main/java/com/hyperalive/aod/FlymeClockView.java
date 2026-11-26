@@ -23,6 +23,7 @@ import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 
 /**
  * 魅族 Flyme 原生风格 AOD / 锁屏时钟组件。
@@ -472,12 +473,16 @@ public class FlymeClockView extends FrameLayout {
 
     public void updateTime() {
         Date now = new Date();
+        TimeZone zone = TimeZone.getDefault();
+        if (!zone.equals(mDateFormat.getTimeZone())) {
+            mDateFormat.setTimeZone(zone);
+            mHourFormat.setTimeZone(zone);
+            mMinuteFormat.setTimeZone(zone);
+            mSingleTimeFormat.setTimeZone(zone);
+        }
         String dateStr = mDateFormat.format(now);
         if (mConfig.showLunar) {
-            String lunar = LunarCalendar.getLunarDateString(now);
-            if (lunar != null && !lunar.isEmpty()) {
-                dateStr += " " + lunar;
-            }
+            dateStr += " " + LunarCalendar.getLunarDateString(now, zone);
         }
         mDateView.setText(dateStr);
 

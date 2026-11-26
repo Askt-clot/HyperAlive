@@ -119,11 +119,19 @@ final class CosmicMotion implements WallpaperMotion {
             }
             duration=Math.max(duration,Math.max(backgroundMs,Math.max(cameraMs,Math.max(flowMs,noiseMs))));
         }
-        if(!animate)System.arraycopy(states[mode],0,values,0,SIZE);
+        if(!animate)finishScene();
     }
-    public void pause(){last=0;transitionTime.pause();}
+    public void pause(){pause(true);}
+    public void pause(boolean freezeScene){
+        last=0;
+        if(freezeScene)transitionTime.pause();
+    }
     public boolean active(){return transitioning;}
-    public void advance(long now,float speed){
+    public void finishScene(){
+        System.arraycopy(states[mode],0,values,0,SIZE);
+        transitioning=false;
+    }
+    public void advanceScene(long now){
         if(transitioning){
             float ms=transitionTime.advance(now);
             for(int i=0;i<SIZE;i++){
@@ -137,8 +145,11 @@ final class CosmicMotion implements WallpaperMotion {
                 float t=d==0?1:curve.getInterpolation(Math.max(0,Math.min(1,elapsed/d)));
                 values[i]=from[i]+(states[mode][i]-from[i])*t;
             }
-            if(ms>=duration){System.arraycopy(states[mode],0,values,0,SIZE);transitioning=false;}
+            if(ms>=duration)finishScene();
         }
+    }
+    public void advance(long now,float speed){
+        advanceScene(now);
         float delta=last==0?0:Math.min(.05f,Math.max(0,(now-last)/1_000_000_000f))*speed;
         last=now;time+=delta;angle=(angle+delta*30*values[3])%360;
     }

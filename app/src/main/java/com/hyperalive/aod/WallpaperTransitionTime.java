@@ -1,6 +1,6 @@
 package com.hyperalive.aod;
 
-/** Visible frame time, matching Animator.pause/resume for the imported wallpaper tracks. */
+/** Elapsed scene time on a monotonic clock, with optional pause and resume. */
 final class WallpaperTransitionTime {
     private long last=-1,elapsed;
     void restart(){elapsed=0;last=-1;}

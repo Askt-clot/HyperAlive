@@ -34,7 +34,11 @@ final class BubbleMotion implements WallpaperMotion {
         mode=keepLock&&scene==2?1:scene;System.arraycopy(states[mode],0,values,0,SIZE);
     }
     public void follow(float x,float y){} // This family has a full composition, not a clock-centered orb.
-    public void pause(){last=0;transitionTime.pause();}
+    public void pause(){pause(true);}
+    public void pause(boolean freezeScene){
+        last=0;
+        if(freezeScene)transitionTime.pause();
+    }
     public boolean active(){return moving;}
     private void track(int b,int component,int ms,int wait,Interpolator curve){duration[b][component]=ms;delay[b][component]=wait;curves[b][component]=curve;}
     public void change(int scene,boolean animate){
@@ -65,10 +69,14 @@ final class BubbleMotion implements WallpaperMotion {
             int start=previous==0&&b==2?260:previous==1&&mode==2&&b==0?300:0;
             for(int c=0;c<3;c++){if(duration[b][c]==300){duration[b][c]=longest;delay[b][c]=start;}total=Math.max(total,delay[b][c]+duration[b][c]);}
         }
-        if(!animate)System.arraycopy(states[mode],0,values,0,SIZE);
+        if(!animate)finishScene();
     }
     private float fraction(float elapsed,int ms,int wait,Interpolator curve){return curve.getInterpolation(Math.max(0,Math.min(1,(elapsed-wait)/ms)));}
-    public void advance(long now,float speed){
+    public void finishScene(){
+        System.arraycopy(states[mode],0,values,0,SIZE);
+        moving=false;
+    }
+    public void advanceScene(long now){
         if(moving){
             float elapsed=transitionTime.advance(now);
             for(int b=0;b<3;b++){
@@ -81,8 +89,11 @@ final class BubbleMotion implements WallpaperMotion {
                 }
             }
             float t=fraction(elapsed,bgDuration,bgDelay,bgCurve);for(int i=108;i<SIZE;i++)values[i]=from[i]+(states[mode][i]-from[i])*t;
-            if(elapsed>=total){System.arraycopy(states[mode],0,values,0,SIZE);moving=false;}
+            if(elapsed>=total)finishScene();
         }
+    }
+    public void advance(long now,float speed){
+        advanceScene(now);
         float delta=last==0?0:Math.min(.05f,Math.max(0,(now-last)/1_000_000_000f))*speed;last=now;time+=delta*.4f;
     }
 }
