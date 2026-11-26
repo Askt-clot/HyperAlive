@@ -1,3 +1,7 @@
+/*
+ * Design or implementation reference: OpenAlive (app/java/org/aliveclean/MainActivity.java).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 import android.app.Activity;

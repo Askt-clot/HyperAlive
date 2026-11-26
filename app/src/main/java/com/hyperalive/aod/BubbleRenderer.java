@@ -1,3 +1,7 @@
+/*
+ * Contains code adapted from OpenAlive (org.aliveclean.BubbleRenderer).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 import android.content.res.AssetManager;

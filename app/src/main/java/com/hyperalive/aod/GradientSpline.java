@@ -1,3 +1,7 @@
+/*
+ * Contains code adapted from OpenAlive (org.aliveclean.GradientSpline).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 /** Natural cubic spline (zero second derivative at both ends), in normalized UV units. */

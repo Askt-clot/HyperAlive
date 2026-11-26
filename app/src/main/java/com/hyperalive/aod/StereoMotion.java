@@ -1,3 +1,7 @@
+/*
+ * Contains code adapted from OpenAlive (org.aliveclean.StereoMotion).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 /** Original gyro-vector displacement and .87/1 scene crop, on the render thread. */

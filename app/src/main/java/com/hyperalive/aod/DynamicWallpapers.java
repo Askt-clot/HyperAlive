@@ -1,3 +1,7 @@
+/*
+ * Design or implementation reference: OpenAlive (app/assets/cosmic/catalog.json).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 import android.content.Context;

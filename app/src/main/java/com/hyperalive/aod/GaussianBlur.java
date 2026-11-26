@@ -1,3 +1,7 @@
+/*
+ * Design or implementation reference: OpenAlive (native/blur.rs).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 import android.opengl.GLES30;

@@ -1,3 +1,7 @@
+/*
+ * Design or implementation reference: OpenAlive (app/java/org/aliveclean/PhotoStyle.java).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 /** 参数对应 OpenAlive PhotoStyle 和各遮罩目录的 manifest.json。 */

@@ -1,3 +1,7 @@
+/*
+ * Includes frame pose data from OpenAlive (native/frame_rear.rs).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 import android.content.Context;

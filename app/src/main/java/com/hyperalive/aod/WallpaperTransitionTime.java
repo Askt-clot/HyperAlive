@@ -1,3 +1,7 @@
+/*
+ * Contains code adapted from OpenAlive (org.aliveclean.WallpaperTransitionTime).
+ * Upstream attribution and applicable license: THIRD_PARTY_NOTICES.md.
+ */
 package com.hyperalive.aod;
 
 /** Elapsed scene time on a monotonic clock, with optional pause and resume. */
