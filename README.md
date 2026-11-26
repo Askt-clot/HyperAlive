@@ -29,54 +29,51 @@
 
 ## 二、版本演进历史
 
-| 版本 | |核心变更说明 |
-| :--- | :--- | :--- |
+| 版本 | 核心变更说明 |
+| :--- | :--- |
 | **v1.0.0** | 实现「启航」与「留光」双息屏视觉、Flyme 自绘时钟排版、壁纸跟随与基础 LSPosed 转场 Hook。 |
 | **v1.0.1** | 1.1 稳定基线版。完善双槽位壁纸架构（which=1 桌面 + which=2 锁屏），协同 HyperOS 原生全屏 AOD（`full_screen_aod_on` 模式），留光相框遮罩高清屏适配。 |
 | **v1.0.2** | 全面升级为单槽位 `which=3` 一体化常驻渲染，彻底消灭 74ms 跨窗口黑闪；深度注入 `system_server` 电源前馈与 Doze 状态重定向；推出自研免 Gradle 极速 Python 构建工具链。 |
-| **v1.0.3** |修复已知问题，提升稳定性，新增星月息屏样式
-| **v1.0.4** |修复桌面到息屏的亮度异常问题，修复黑闪问题，优化UI界面，提示稳定性
-| **v1.0.5** |修复已知问题，新增动态壁纸，新增轻启，山脉，银河息屏样式
+| **v1.0.3** | 修复已知问题，提升稳定性，新增星月息屏样式 |
+| **v1.0.4** | 修复桌面到息屏的亮度异常问题，修复黑闪问题，优化UI界面，提示稳定性 |
+| **v1.0.5** | 修复已知问题，新增动态壁纸，新增轻启，山脉，银河息屏样式 |
 
 ---
 
 ## 三、工程结构与快速构建
 
-本项目采用标准 Android Gradle 工程结构，同时内置了无需 Gradle 的超快速 Python 本地构建工具链：
+### 工程结构
 
 ```text
-D:\HyperAlive
-├── app/                                # 核心模块工程
-│   └── src/main/
-│       ├── java/com/qihang/aod/        # Java 源码（GLES 渲染、时钟、UI、LSPosed Hook）
-│       │   ├── LensRenderer.java       # GLES 3.0 启航透镜与留光/星月相框渲染器
-│       │   ├── FlymeClockView.java     # 魅族风格自绘时钟
-│       │   ├── PhotoCropActivity.java  # 取景框裁剪与缩放
-│       │   ├── QihangWallpaper.java    # 单槽位一体化 WallpaperService
-│       │   ├── LspState.java           # LSPosed 激活状态三态判定与锁屏安全管理
-│       │   ├── XposedInit.java         # LSPosed 系统 Hook 入口
-│       │   ├── hook/                   # 模块化 Hook 核心层（PMS/SysUI/AOD/时钟与预览协同）
-│       │   └── root/                   # 独立进程工具（app_process 直连设壁纸与 LspDb）
-│       ├── res/                        # 资源文件（图标、布局、文本、作用域配置）
-│       └── assets/                     # 着色器(GLSL)、遮罩素材(启航/留光/星月)与配置
-├── stub/                               # Xposed API 离线编译桩
-├── tools/                              # 自动化调试、动效回归与时钟时序测试工具链
-├── build.py                            # 本地构建脚本
-├── deploy.py                           # ADB 快速安装、激活作用域与单槽绑定工具
+HyperAlive/
+├── app/src/main/
+│   ├── AndroidManifest.xml        # 包名、版本和 LSPosed 模块声明
+│   ├── java/com/hyperalive/aod/    # 壁纸引擎、预览编辑器、时钟和 LSPosed Hook
+│   ├── assets/                   # 动态壁纸资源、照片息屏遮罩和 GLSL 着色器
+│   └── res/                      # 图标、文案和 Android 资源
+├── stub/                         # 离线编译使用的 Xposed API 桩
+├── tools/                        # 转场、息屏宿主和壁纸备份回归
+└── build.py                      # 免 Gradle 的本地构建脚本
 ```
 
-### 极速构建与真机部署
+### 下载与安装
+
+下载安装包后，在 LSPosed 中启用 HyperAlive，按第四节设置作用域。 [GitHub Releases](https://github.com/Askt-clot/HyperAlive/releases/latest)
+
+### 本地构建
+
+准备 Python 3、JDK 和 Android SDK（含 Android 平台与 Build Tools）。通过 `JAVA_HOME` 或 `PATH` 指定 JDK，通过 `ANDROID_SDK_ROOT` 或 `ANDROID_HOME` 指定 SDK。
+
+用环境变量提供自己的签名配置。`HYPERALIVE_KEYSTORE` 指向密钥库，`HYPERALIVE_KS_ALIAS` 指定密钥别名，`HYPERALIVE_KS_PASS` 指定密钥库口令。密钥口令不同时，另设 `HYPERALIVE_KEY_PASS`。
+
+在工程根目录执行以下命令构建 1.0.5，并在已连接设备上安装。
 
 ```bash
-# 1. 极速全量编译并签名
 python build.py
-
-# 2. 一键安装并配置 LSPosed 作用域
-python deploy.py install
-
-# 3. 绑定单槽位一体化动态壁纸
-python deploy.py setwall
+adb install -r build/HyperAlive-v1.0.5.apk
 ```
+
+运行 `python build.py --help` 可以查看 SDK、签名和输出路径的命令行选项。
 
 ---
 
@@ -92,4 +89,5 @@ python deploy.py setwall
 ---
 
 ## 五、致谢
-- 下北沢最速傳說 参考项目https://github.com/Maga-King/OpenAlive
+
+感谢 **下北沢最速傳說**（**OpenAlive** 作者）开源分享。HyperAlive 在照片息屏样式、三态转场和壁纸纹理的实现中参考了 OpenAlive。 [OpenAlive 项目](https://github.com/Maga-King/OpenAlive)
