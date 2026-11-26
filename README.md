@@ -1,6 +1,7 @@
 # HyperAlive / 魅族息屏 (io.github.askt_clot.hyperalive) —— LSPosed 模块
 
-> 在小米澎湃 OS4（Xiaomi HyperOS / Android 14+ / 17）上复刻魅族 Alive 壁纸「息屏 AOD ➔ 锁屏 ➔ 桌面」三态无缝连贯动画。  
+> 面向小米澎湃 OS 4（Xiaomi HyperOS），实现魅族 Alive 壁纸「息屏 AOD ➔ 锁屏 ➔ 桌面」三态转场。已在小米 17 Pro Max 上实测，其他机型和系统版本待验证。
+>
 > 采用 **LSPosed 模块 + 自建 WallpaperService (GLES 3.0)** 实现。
 
 ---
@@ -14,7 +15,7 @@
    - **轻启、山脉、银河**：另外三种照片息屏样式。
 2. **自定义壁纸跟随与取景框**：
    - 支持相册任意照片跟随息屏与锁屏。
-   - 内置图片取景器，支持精准双指缩放、旋转、移动与一键复位居中。
+   - 内置图片取景器，支持双指缩放、拖动和恢复默认取景。
    - 六种照片息屏样式均可拖动预览或用水平、垂直滑块调整位置，拖动时显示参考线。
 3. **自绘魅族经典时钟 (FlymeClockView)**：
    - 纯 Canvas 自绘魅族特色时钟排版（双行堆叠、纵向拉伸、极简单行等风格）。
@@ -24,8 +25,8 @@
    - 内置 36 款动态壁纸，由 `QihangDynamicWallpaper` 统一承接息屏、锁屏与桌面。
 5. **深度系统级转场协同（LSPosed Hook）**：
    - **系统电源前馈**：监听主屏所在的 `PowerGroup` 状态，分发息屏和亮屏转场。
-   - **防黑屏重定向**：`DisplayPowerState.setScreenState` 将断电入参重定向为 `STATE_DOZE`，杜绝 OLED 物理断电黑闪；阻断 `prepareColorFade` 硬件淡黑。
-   - **SystemUI 协同**：监听 `ScrimController.updateScrims` 兜底三态分发；整体拦截 `KeyguardPanelViewController.doWallpaperBlackAnim` 黑屏动画图层。
+   - **主屏息屏转场**：在 HyperAlive 接管锁屏壁纸且 AOD 已开启时，按转场阶段调整显示状态和淡出动画，减少黑闪。
+   - **SystemUI 协同**：监听 `ScrimController.updateScrims`，为三态切换提供补充信号。息屏策略生效时，拦截 `KeyguardPanelViewController.doWallpaperBlackAnim` 触发的锁屏壁纸黑屏动画。
 
 ---
 
@@ -35,7 +36,7 @@
 | :--- | :--- |
 | **v1.0.0** | 实现「启航」与「留光」双息屏视觉、Flyme 自绘时钟排版、壁纸跟随与基础 LSPosed 转场 Hook。 |
 | **v1.0.1** | 完善双槽位壁纸架构（which=1 桌面 + which=2 锁屏），协同 HyperOS 原生全屏 AOD（`full_screen_aod_on` 模式），留光相框遮罩高清屏适配。 |
-| **v1.0.2** | 全面升级为单槽位 `which=3` 一体化常驻渲染，彻底消灭 74ms 跨窗口黑闪；深度注入 `system_server` 电源前馈与 Doze 状态重定向；推出自研免 Gradle 极速 Python 构建工具链。 |
+| **v1.0.2** | 改用单槽位 `which=3` 一体化渲染，处理当时双槽切换时因跨窗口重建渲染表面而出现的黑闪。加入 `system_server` 电源事件联动与 Doze 状态重定向。 |
 | **v1.0.3** | 修复已知问题，提升稳定性，新增星月息屏样式 |
 | **v1.0.4** | 修复桌面进入息屏时的亮度异常和部分黑闪问题，优化界面并提升稳定性。 |
 | **v1.0.5** | 新增 36 款动态壁纸，以及轻启、山脉、银河三种息屏样式。支持拖动和滑块调整六种息屏样式的位置，修正魅族时钟的农历日期。 |
@@ -60,7 +61,9 @@ HyperAlive/
 
 ### 下载与安装
 
-下载安装包后，在 LSPosed 中启用 HyperAlive，按第四节设置作用域。 [GitHub Releases](https://github.com/Askt-clot/HyperAlive/releases/latest)
+下载安装包后，在 LSPosed 中启用 HyperAlive，按第四节设置作用域。APK 的最低安装要求为 Android 10（API 29）。[GitHub Releases](https://github.com/Askt-clot/HyperAlive/releases/latest)
+
+使用「备份并应用」或恢复原壁纸时，需要为 HyperAlive 授予 Root 权限。
 
 从旧包名 `com.hyperalive.aod` 或 `com.qihang.aod` 迁移时，Android 会将新包视为独立应用。请在 LSPosed 中停用旧模块、启用新模块并重新设置作用域，再在新应用中设置壁纸。旧应用的私有设置不会自动迁移。
 
@@ -79,24 +82,28 @@ python build.py
 adb install -r build/HyperAlive-v1.0.5.apk
 ```
 
+设备上已有同包名应用时，`adb install -r` 要求新旧 APK 的签名匹配。
+
 运行 `python build.py --help` 可以查看 SDK、签名和输出路径的命令行选项。
 
 ---
 
 ## 四、LSPosed 推荐作用域
 
-在 LSPosed 管理器中勾选以下系统作用域：
+在 LSPosed 管理器中选择以下推荐作用域。
+
 - `系统框架` (`android`)
 - `System UI` (`com.android.systemui`)
 - `System UI 插件` (`miui.systemui.plugin`)
 - `息屏与锁屏` (`com.miui.aod`)
 - `主题壁纸` (`com.android.thememanager`)
+- HyperAlive 自身 (`io.github.askt_clot.hyperalive`)，用于检测模块启用状态和转发日志。
 
 ---
 
 ## 五、资产说明
 
-HyperAlive 有权授权的自实现代码采用 MIT 许可。移植自 OpenAlive 的代码保留上游的版权声明与[MIT 许可证](LICENSE)。
+HyperAlive 有权授权的自实现代码采用 MIT 许可。移植自 OpenAlive 的代码保留上游的版权声明和 MIT 许可正文。[HyperAlive MIT 许可证](LICENSE) · [OpenAlive MIT 许可证](app/src/main/assets/licenses/OpenAlive-MIT.txt)
 
 **部分资产来源于魅族 Flyme OS。** 随仓库或 APK 分发的第三方字体、壁纸视频、效果遮罩、着色器和预览素材保留各自权利人的版权及适用条款，排除在 HyperAlive 的 MIT 授权范围之外。具体来源和排除路径见 [资源说明](THIRD_PARTY_NOTICES.md)。
 
@@ -104,4 +111,4 @@ HyperAlive 有权授权的自实现代码采用 MIT 许可。移植自 OpenAlive
 
 ## 六、致谢
 
-感谢 **下北沢最速傳說** 开源分享。HyperAlive 在照片息屏样式、三态转场和壁纸纹理的实现中参考了[OpenAlive](https://github.com/Maga-King/OpenAlive)。
+感谢 OpenAlive 作者 **下北沢最速傳說** 和项目贡献者。HyperAlive 移植了部分 OpenAlive 代码，并参考了其照片息屏样式、三态转场和壁纸纹理的实现。[OpenAlive 项目](https://github.com/Maga-King/OpenAlive) · [代码与资源来源](THIRD_PARTY_NOTICES.md)
