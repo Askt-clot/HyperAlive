@@ -110,4 +110,4 @@ HyperAlive 有权授权的自实现代码采用 MIT 许可。移植自 OpenAlive
 
 ## 六、致谢
 
-感谢 OpenAlive 作者 **下北沢最速傳說** 和项目贡献者。HyperAlive 移植了部分 OpenAlive 代码，并参考了其照片息屏样式、三态转场和壁纸纹理的实现。[OpenAlive 项目](https://github.com/Maga-King/OpenAlive) · [代码与资源来源](THIRD_PARTY_NOTICES.md)
+感谢 OpenAlive 作者 **下北沢最速傳說** 和项目贡献者。HyperAlive 移植了部分 [OpenAlive](https://github.com/Maga-King/OpenAlive) 代码，并参考了其照片息屏样式、三态转场和壁纸纹理的实现。[代码与资源来源](THIRD_PARTY_NOTICES.md)
